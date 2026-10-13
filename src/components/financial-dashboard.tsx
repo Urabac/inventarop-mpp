@@ -477,8 +477,8 @@ function Sidebar({
           <WalletCards />
         </span>
         <div>
-          <p className="text-lg font-bold">Credihogar</p>
-          <p className="text-xs text-muted-foreground">Tumeremo</p>
+          <p className="text-lg font-bold">Moto partes</p>
+          <p className="text-xs text-muted-foreground">Pirueta</p>
         </div>
       </div>
       <nav className="mt-10 space-y-1" aria-label="Navegación principal">
@@ -572,7 +572,7 @@ function Header({
           <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary text-primary-foreground">
             <WalletCards className="h-5 w-5" />
           </span>
-          <strong>Credihogar Tumeremo</strong>
+          <strong>Motopartes Pirueta</strong>
         </div>
         <h1 className="text-2xl font-bold sm:text-3xl">{titles[section][0]}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{titles[section][1]}</p>
