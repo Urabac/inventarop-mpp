@@ -2,22 +2,16 @@ import React, { useState, useEffect } from "react";
 import { 
   ShoppingBag, 
   Package, 
-  Boxes, 
   CreditCard, 
   ArrowUpRight, 
-  ArrowDownLeft,
   LayoutDashboard,
-  Store,
   LogOut,
   Edit,
   Trash2,
   Plus,
-  Save,
   X,
   DollarSign,
-  Search,
-  Calendar,
-  Filter
+  Search
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -291,126 +285,4 @@ export function FinancialDashboard(props: any) {
         </div>
       </aside>
 
-      {/* CONTENIDO PRINCIPAL */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        <header className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-md">
-          <div className="max-w-7xl mx-auto px-6 py-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div>
-              <span className="bg-white/20 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
-                Moto Partes Pirueta
-              </span>
-              <h2 className="text-3xl font-black mt-2">
-                {currentSection === "inicio" && "Panel Principal"}
-                {currentSection === "ventas" && "Módulo de Ventas"}
-                {currentSection === "inventario" && "Módulo de Inventario"}
-              </h2>
-              <p className="text-emerald-100 text-sm mt-1">
-                Control rápido de inventario, tasas y transacciones del día.
-              </p>
-            </div>
-
-            {/* Tasa BCV Interactiva */}
-            <div className="bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/20 flex items-center gap-3">
-              <DollarSign className="w-5 h-5 text-emerald-200" />
-              <div>
-                <p className="text-xs text-emerald-100 font-medium">Precio del dólar BCV:</p>
-                {editandoTasa ? (
-                  <div className="flex items-center gap-2 mt-1">
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      value={tempTasa}
-                      onChange={(e) => setTempTasa(e.target.value)}
-                      className="w-28 px-2 py-1 text-gray-900 text-sm rounded font-bold bg-white"
-                    />
-                    <button onClick={guardarTasa} className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-bold rounded">
-                      Confirmar
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg font-bold text-white">
-                      {tasaBcv.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS
-                    </span>
-                    <button 
-                      onClick={() => { setTempTasa(tasaBcv.toString()); setEditandoTasa(true); }}
-                      className="text-xs bg-white/20 hover:bg-white/30 text-white px-2 py-0.5 rounded font-medium transition"
-                    >
-                      Asignar / Editar
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </header>
-
-        <div className="max-w-7xl w-full mx-auto px-6 py-8">
-          {currentSection === "inicio" && (
-            <div className="space-y-8">
-              <div>
-                <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4">Acciones rápidas</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <button 
-                    onClick={() => { setModalVentaOpen(true); }}
-                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm hover:border-emerald-500 hover:shadow-md transition text-left flex items-center justify-between group"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl group-hover:bg-emerald-600 group-hover:text-white transition">
-                        <ShoppingBag className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <p className="font-bold text-gray-900">Nueva Venta</p>
-                        <p className="text-xs text-gray-500">Registrar transacción rápida</p>
-                      </div>
-                    </div>
-                    <ArrowUpRight className="w-5 h-5 text-gray-400 group-hover:text-emerald-600" />
-                  </button>
-
-                  <button 
-                    onClick={() => setCurrentSection("inventario")}
-                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm hover:border-emerald-500 hover:shadow-md transition text-left flex items-center justify-between group"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="p-3 bg-blue-50 text-blue-600 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition">
-                        <Package className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <p className="font-bold text-gray-900">Ver Inventario</p>
-                        <p className="text-xs text-gray-500">Gestionar productos y precios</p>
-                      </div>
-                    </div>
-                    <ArrowUpRight className="w-5 h-5 text-gray-400 group-hover:text-blue-600" />
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4">Resumen general</h3>
-                <section className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                  <div 
-                    onClick={() => setCurrentSection("inventario")}
-                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm cursor-pointer hover:border-emerald-500 transition flex items-center justify-between"
-                  >
-                    <div>
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Unidades en stock</p>
-                      <p className="text-3xl font-black text-gray-900 mt-2">{totalStock}</p>
-                    </div>
-                    <div className="p-4 bg-blue-50 text-blue-600 rounded-2xl">
-                      <Package className="w-7 h-7" />
-                    </div>
-                  </div>
-
-                  <div 
-                    onClick={() => setCurrentSection("ventas")}
-                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm cursor-pointer hover:border-emerald-500 transition flex items-center justify-between"
-                  >
-                    <div>
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Ventas registradas</p>
-                      <p className="text-3xl font-black text-gray-900 mt-2">{sales?.length || 0}</p>
-                    </div>
-                    <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl">
-                      <CreditCard className="w-7 h-7" />
-                    </div>
-                  </div>
-                </section>
+      {
