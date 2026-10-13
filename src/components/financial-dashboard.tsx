@@ -17,6 +17,28 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+// --- CONFIGURACIÓN DE FIREBASE ---
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, onSnapshot } from "firebase/firestore";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDXvWnkdShjz__lIZKIZY2qaEhRrcp_gCo",
+  authDomain: "atelier-536a6.firebaseapp.com",
+  projectId: "atelier-536a6",
+  storageBucket: "atelier-536a6.firebasestorage.app",
+  messagingSenderId: "27237769110",
+  appId: "1:27237769110:web:fd91605d39e3fb2e5547b7",
+  measurementId: "G-MLL1DCD2ZE"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// --- COLECCIONES ESPECÍFICAS PARA EVITAR CRUCES CON OTROS PROYECTOS ---
+const COLLECTION_INVENTARIO = "motopartes_pirueta_inventario";
+const COLLECTION_VENTAS = "motopartes_pirueta_ventas";
+const COLLECTION_CONFIG = "motopartes_pirueta_configuracion";
+
 export function FinancialDashboard(props: any) {
   const {
     userEmail,
@@ -25,43 +47,52 @@ export function FinancialDashboard(props: any) {
 
   const [currentSection, setCurrentSection] = useState("inicio");
   
-  const [tasaBcv, setTasaBcv] = useState<number>(() => {
-    const saved = localStorage.getItem("tasa_bcv");
-    return saved ? parseFloat(saved) : 877.65;
-  });
+  const [tasaBcv, setTasaBcv] = useState<number>(877.65);
   const [editandoTasa, setEditandoTasa] = useState(false);
   const [tempTasa, setTempTasa] = useState(tasaBcv.toString());
 
-  const [products, setProducts] = useState<any[]>(() => {
-    const saved = localStorage.getItem("inventario_pirueta");
-    return saved ? JSON.parse(saved) : [
-      { id: "1", codigo: "MP-001", nombre: "Bujía NGK Moto", cantidad: 12, pCompra: 0.80 },
-      { id: "2", codigo: "MP-002", nombre: "Kit de arrastre GN125", cantidad: 4, pCompra: 18.00 }
-    ];
-  });
-
-  const [sales, setSales] = useState<any[]>(() => {
-    const saved = localStorage.getItem("ventas_pirueta");
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  // Estado para la búsqueda en la sección de inventario
+  const [products, setProducts] = useState<any[]>([]);
+  const [sales, setSales] = useState<any[]>([]);
   const [busquedaInventario, setBusquedaInventario] = useState("");
 
+  // SINCRONIZACIÓN EN TIEMPO REAL CON COLECCIONES AISLADAS
   useEffect(() => {
-    localStorage.setItem("inventario_pirueta", JSON.stringify(products));
-  }, [products]);
+    // 1. Escuchar Inventario Exclusivo
+    const unsubProducts = onSnapshot(collection(db, COLLECTION_INVENTARIO), (snapshot) => {
+      const listaProd = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setProducts(listaProd);
+    });
 
-  useEffect(() => {
-    localStorage.setItem("ventas_pirueta", JSON.stringify(sales));
-  }, [sales]);
+    // 2. Escuchar Ventas Exclusivas
+    const unsubSales = onSnapshot(collection(db, COLLECTION_VENTAS), (snapshot) => {
+      const listaVentas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      listaVentas.sort((a: any, b: any) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+      setSales(listaVentas);
+    });
 
-  const guardarTasa = () => {
+    // 3. Escuchar Configuración Exclusiva (Tasa BCV)
+    const unsubTasa = onSnapshot(doc(db, COLLECTION_CONFIG, "bcv"), (docSnap) => {
+      if (docSnap.exists()) {
+        const val = docSnap.data().valor;
+        setTasaBcv(val);
+        setTempTasa(val.toString());
+      }
+    });
+
+    return () => {
+      unsubProducts();
+      unsubSales();
+      unsubTasa();
+    };
+  }, []);
+
+  // Guardar Tasa BCV en la configuración aislada
+  const guardarTasa = async () => {
     const val = parseFloat(tempTasa);
     if (!isNaN(val) && val > 0) {
       setTasaBcv(val);
-      localStorage.setItem("tasa_bcv", val.toString());
       setEditandoTasa(false);
+      await setDoc(doc(db, COLLECTION_CONFIG, "bcv"), { valor: val });
     }
   };
 
@@ -104,35 +135,30 @@ export function FinancialDashboard(props: any) {
     setModalProductoOpen(true);
   };
 
-  const guardarProducto = (e: React.FormEvent) => {
+  // Guardar / Actualizar Producto en la colección exclusiva de Inventario
+  const guardarProducto = async (e: React.FormEvent) => {
     e.preventDefault();
     const pCompraNum = parseFloat(formPCompra) || 0;
     const cantidadNum = parseInt(formCantidad) || 0;
 
+    const datosProd = {
+      codigo: formCodigo || `MP-${Math.floor(Math.random() * 900 + 100)}`,
+      nombre: formNombre || "Sin nombre",
+      cantidad: cantidadNum,
+      pCompra: pCompraNum
+    };
+
     if (editandoId) {
-      setProducts(products.map(p => p.id === editandoId ? {
-        ...p,
-        codigo: formCodigo,
-        nombre: formNombre,
-        cantidad: cantidadNum,
-        pCompra: pCompraNum
-      } : p));
+      await updateDoc(doc(db, COLLECTION_INVENTARIO, editandoId), datosProd);
     } else {
-      const nuevoProd = {
-        id: Date.now().toString(),
-        codigo: formCodigo || `MP-${Math.floor(Math.random() * 900 + 100)}`,
-        nombre: formNombre || "Sin nombre",
-        cantidad: cantidadNum,
-        pCompra: pCompraNum
-      };
-      setProducts([...products, nuevoProd]);
+      await addDoc(collection(db, COLLECTION_INVENTARIO), datosProd);
     }
     setModalProductoOpen(false);
   };
 
-  const eliminarProducto = (id: string) => {
+  const eliminarProducto = async (id: string) => {
     if (confirm("¿Estás seguro de eliminar este producto?")) {
-      setProducts(products.filter(p => p.id !== id));
+      await deleteDoc(doc(db, COLLECTION_INVENTARIO, id));
     }
   };
 
@@ -143,7 +169,6 @@ export function FinancialDashboard(props: any) {
   const [referenciaPago, setReferenciaPago] = useState("");
   const [filtroVentas, setFiltroVentas] = useState("dia");
 
-  // Validación estricta de stock al agregar o incrementar en el carrito
   const agregarAlCarrito = (prod: any) => {
     const productoInventario = products.find(p => p.id === prod.id);
     const stockDisponible = productoInventario ? productoInventario.cantidad : 0;
@@ -184,7 +209,8 @@ export function FinancialDashboard(props: any) {
   const totalVentaDolares = carrito.reduce((sum, item) => sum + (item.pVenta * item.qty), 0);
   const totalVentaBs = carrito.reduce((sum, item) => sum + (item.pFinalBs * item.qty), 0);
 
-  const confirmarVenta = () => {
+  // Confirmar Venta y registrar en la colección exclusiva de Ventas
+  const confirmarVenta = async () => {
     if (carrito.length === 0) {
       alert("El carrito está vacío.");
       return;
@@ -202,17 +228,16 @@ export function FinancialDashboard(props: any) {
       }
     }
 
-    const nuevoInventario = products.map(prod => {
-      const enCarrito = carrito.find(c => c.id === prod.id);
-      if (enCarrito) {
-        return { ...prod, cantidad: Math.max(0, prod.cantidad - enCarrito.qty) };
+    // Descontar inventario en Firestore
+    for (let enCarrito of carrito) {
+      const prodActual = products.find(p => p.id === enCarrito.id);
+      if (prodActual) {
+        const nuevaCant = Math.max(0, prodActual.cantidad - enCarrito.qty);
+        await updateDoc(doc(db, COLLECTION_INVENTARIO, enCarrito.id), { cantidad: nuevaCant });
       }
-      return prod;
-    });
-    setProducts(nuevoInventario);
+    }
 
     const nuevaVenta = {
-      id: Date.now().toString(),
       fecha: new Date().toISOString(),
       items: [...carrito],
       totalDolares: totalVentaDolares,
@@ -221,7 +246,8 @@ export function FinancialDashboard(props: any) {
       referencia: (metodoPago === "Pago movil" || metodoPago === "Transferencia") ? referenciaPago : ""
     };
 
-    setSales([nuevaVenta, ...sales]);
+    await addDoc(collection(db, COLLECTION_VENTAS), nuevaVenta);
+
     setCarrito([]);
     setMetodoPago("Efectivo");
     setReferenciaPago("");
@@ -243,7 +269,6 @@ export function FinancialDashboard(props: any) {
     return true;
   });
 
-  // Filtrado de productos para la tabla de inventario
   const productosFiltradosInventario = products.filter(p => 
     p.nombre.toLowerCase().includes(busquedaInventario.toLowerCase()) || 
     p.codigo.toLowerCase().includes(busquedaInventario.toLowerCase())
@@ -336,7 +361,7 @@ export function FinancialDashboard(props: any) {
         <div>
           <div className="p-6 border-b border-gray-100">
             <span className="text-xs font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">
-              Sistema Express
+              Sistema Nube
             </span>
             <h1 className="text-xl font-bold text-gray-900 mt-2">Moto Partes Pirueta</h1>
           </div>
@@ -401,7 +426,7 @@ export function FinancialDashboard(props: any) {
                 {currentSection === "inventario" && "Módulo de Inventario"}
               </h2>
               <p className="text-emerald-100 text-sm mt-1">
-                Control rápido de inventario, tasas y transacciones del día.
+                Control exclusivo y seguro en la nube.
               </p>
             </div>
 
@@ -601,7 +626,6 @@ export function FinancialDashboard(props: any) {
                 </Button>
               </div>
 
-              {/* Buscador en Inventario */}
               <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
                 <div className="relative">
                   <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
@@ -680,7 +704,7 @@ export function FinancialDashboard(props: any) {
         </div>
       </main>
 
-{modalVentaOpen && (
+      {modalVentaOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
