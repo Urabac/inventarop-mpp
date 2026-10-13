@@ -180,13 +180,8 @@ const rebuildSchedulePreservingPayments = (item: Sale | Loan, count: number, tot
 
 const navItems = [
   { id: "inicio" as const, label: "Inicio", icon: Home },
-  { id: "clientes" as const, label: "Clientes", icon: Users },
   { id: "inventario" as const, label: "Inventario", icon: Package },
   { id: "ventas" as const, label: "Ventas", icon: CreditCard },
-  { id: "prestamos" as const, label: "Préstamos", icon: Banknote },
-  { id: "cobranza" as const, label: "Control de cobranza", icon: ClipboardList },
-  { id: "compras" as const, label: "Compras", icon: ReceiptText },
-  { id: "configuracion" as const, label: "Ajustes", icon: Settings },
 ];
 
 export function FinancialDashboard() {
@@ -511,13 +506,11 @@ function MobileNav({
   section: Section;
   onNavigate: (section: Section) => void;
 }) {
-  const items = [
-    { id: "inicio" as const, label: "Inicio", icon: Home },
-    { id: "clientes" as const, label: "Clientes", icon: Users },
-    { id: "ventas" as const, label: "Ventas", icon: CreditCard },
-    { id: "cobranza" as const, label: "Cobranza", icon: ClipboardList },
-    { id: "compras" as const, label: "Compras", icon: ReceiptText },
-  ];
+const items = [
+  { id: "inicio" as const, label: "Inicio", icon: Home },
+  { id: "inventario" as const, label: "Inventario", icon: Package },
+  { id: "ventas" as const, label: "Ventas", icon: CreditCard },
+];
   return (
     <nav
       className="fixed inset-x-3 bottom-3 z-30 grid grid-cols-5 rounded-2xl border border-border bg-card/90 px-1 pb-[max(.55rem,env(safe-area-inset-bottom))] pt-2 shadow-xl backdrop-blur-xl lg:hidden"
@@ -623,11 +616,9 @@ function Dashboard({
   const [currentDate, setCurrentDate] = useState(today);
   useEffect(() => setCurrentDate(localToday()), []);
   const periods: Period[] = ["Hoy", "Ayer", "Últimos 7 días", "Este mes"];
-  const actions = [
-    { title: "Crear cliente", icon: UserPlus, tone: "bg-action-mint", type: "cliente" as const },
-    { title: "Crear venta", icon: ShoppingBag, tone: "bg-action-yellow", type: "venta" as const },
-    { title: "Crear préstamo", icon: Banknote, tone: "bg-action-blue", type: "prestamo" as const },
-  ];
+const actions = [
+  { title: "Crear venta", icon: ShoppingBag, tone: "bg-action-yellow", type: "venta" as const },
+];
   return (
     <div className="space-y-7">
       <section>
@@ -652,9 +643,9 @@ function Dashboard({
           ))}
         </div>
       </section>
-      <section>
+<section>
         <h2 className="mb-4 text-lg font-bold">Acciones rápidas</h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2">
           {actions.map((action) => {
             const Icon = action.icon;
             return (
@@ -674,16 +665,6 @@ function Dashboard({
               </Button>
             );
           })}
-          <Button
-            variant="ghost"
-            onClick={() => setSection("cobranza")}
-            className="h-28 flex-col items-start justify-between rounded-2xl bg-action-pink p-3"
-          >
-            <span className="grid h-10 w-10 place-items-center rounded-xl bg-card/80">
-              <ClipboardList />
-            </span>
-            <span className="text-xs font-bold sm:text-sm">Control de cobranza</span>
-          </Button>
           <Button
             variant="ghost"
             onClick={() => setSection("inventario")}
@@ -748,13 +729,7 @@ function Dashboard({
           )}
         </div>
       </section>
-      <section className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard
-          icon={Users}
-          label="Clientes"
-          value={String(clients.length)}
-          onClick={() => setSection("clientes")}
-        />
+    <section className="grid gap-5 sm:grid-cols-2">
         <SummaryCard
           icon={Package}
           label="Unidades en stock"
@@ -766,13 +741,6 @@ function Dashboard({
           label="Ventas"
           value={String(sales.length)}
           onClick={() => setSection("ventas")}
-        />
-        <SummaryCard
-          icon={Banknote}
-          label="Préstamos"
-          value={String(loans.length)}
-          onClick={() => setSection("prestamos")}
-        />
       </section>
     </div>
   );
