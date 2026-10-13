@@ -65,13 +65,8 @@ import {
 
 type Section =
   | "inicio"
-  | "clientes"
   | "inventario"
   | "ventas"
-  | "prestamos"
-  | "cobranza"
-  | "compras"
-  | "configuracion";
 type Modal = "cliente" | "venta" | "prestamo" | "producto" | "compra" | null;
 type Period = "Hoy" | "Ayer" | "Últimos 7 días" | "Este mes";
 
