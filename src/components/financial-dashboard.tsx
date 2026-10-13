@@ -140,10 +140,10 @@ export function FinancialDashboard(props: any) {
     }
   };
 
-  // --- ESTADOS PARA CREAR VENTA ---
+// --- ESTADOS PARA CREAR VENTA ---
   const [modalVentaOpen, setModalVentaOpen] = useState(false);
   const [carrito, setCarrito] = useState<any[]>([]);
   const [busquedaProducto, setBusquedaProducto] = useState("");
   const [metodoPago, setMetodoPago] = useState("Efectivo");
   const [referenciaPago, setReferenciaPago] = useState("");
-  const [filtroVentas, setFiltroVentas] = useState("
+  const [filtroVentas, setFiltroVentas] = useState("dia"); // 'dia', 'semana', 'mes'
