@@ -91,20 +91,33 @@ export function FinancialDashboard(props: any) {
         </div>
       </section>
 
-      {/* Tarjetas de Resumen (Stock y Ventas) */}
+{/* Tarjetas de Resumen (Stock y Ventas) */}
       <section className="grid gap-5 sm:grid-cols-2">
-        <SummaryCard
-          icon={Package}
-          label="Unidades en stock"
-          value={String(products.reduce((sum, item) => sum + item.stock, 0))}
+        <div 
           onClick={() => setSection("inventario")}
-        />
-        <SummaryCard
-          icon={CreditCard}
-          label="Ventas"
-          value={String(sales.length)}
+          className="bg-white p-5 rounded-2xl border shadow-sm cursor-pointer hover:border-gray-400 transition flex items-center justify-between"
+        >
+          <div>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Unidades en stock</p>
+            <p className="text-2xl font-black text-gray-900 mt-1">{products.reduce((sum, item) => sum + item.stock, 0)}</p>
+          </div>
+          <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
+            <Package className="w-6 h-6" />
+          </div>
+        </div>
+
+        <div 
           onClick={() => setSection("ventas")}
-        />
+          className="bg-white p-5 rounded-2xl border shadow-sm cursor-pointer hover:border-gray-400 transition flex items-center justify-between"
+        >
+          <div>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Ventas</p>
+            <p className="text-2xl font-black text-gray-900 mt-1">{sales.length}</p>
+          </div>
+          <div className="p-3 bg-green-50 text-green-600 rounded-xl">
+            <CreditCard className="w-6 h-6" />
+          </div>
+        </div>
       </section>
     </div>
   );
