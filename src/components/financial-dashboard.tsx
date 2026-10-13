@@ -1,4 +1,4 @@
-export function Dashboard({
+import React, { useState, useEffect } from "react";
   userEmail,
   logout,
   products,
