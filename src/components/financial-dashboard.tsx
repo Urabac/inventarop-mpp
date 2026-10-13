@@ -1,4 +1,4 @@
-function Dashboard({
+export function Dashboard({
   userEmail,
   logout,
   products,
