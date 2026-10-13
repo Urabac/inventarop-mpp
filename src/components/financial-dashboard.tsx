@@ -23,10 +23,8 @@ export function FinancialDashboard(props: any) {
     logout,
   } = props;
 
-  // Estados locales para navegación y datos de inventario / Tasa BCV
   const [currentSection, setCurrentSection] = useState("inicio");
   
-  // Tasa BCV y su estado de edición
   const [tasaBcv, setTasaBcv] = useState<number>(() => {
     const saved = localStorage.getItem("tasa_bcv");
     return saved ? parseFloat(saved) : 877.65;
@@ -34,7 +32,6 @@ export function FinancialDashboard(props: any) {
   const [editandoTasa, setEditandoTasa] = useState(false);
   const [tempTasa, setTempTasa] = useState(tasaBcv.toString());
 
-  // Estado de inventario local en formato tipo Excel
   const [products, setProducts] = useState<any[]>(() => {
     const saved = localStorage.getItem("inventario_pirueta");
     return saved ? JSON.parse(saved) : [
@@ -43,7 +40,6 @@ export function FinancialDashboard(props: any) {
     ];
   });
 
-  // Estado de ventas con persistencia
   const [sales, setSales] = useState<any[]>(() => {
     const saved = localStorage.getItem("ventas_pirueta");
     return saved ? JSON.parse(saved) : [];
@@ -57,7 +53,6 @@ export function FinancialDashboard(props: any) {
     localStorage.setItem("ventas_pirueta", JSON.stringify(sales));
   }, [sales]);
 
-  // Guardar Tasa BCV
   const guardarTasa = () => {
     const val = parseFloat(tempTasa);
     if (!isNaN(val) && val > 0) {
@@ -67,13 +62,12 @@ export function FinancialDashboard(props: any) {
     }
   };
 
-  // Función matemática de precios solicitada
   const calcularPrecios = (pCompra: number) => {
     let pVenta = 0;
     if (pCompra <= 1) {
       pVenta = 1.5;
     } else {
-      pVenta = pCompra * 1.7; // +70%
+      pVenta = pCompra * 1.7;
     }
     const pFinalBs = pVenta * tasaBcv;
     return {
@@ -82,7 +76,6 @@ export function FinancialDashboard(props: any) {
     };
   };
 
-  // Estados para Modal de Producto (Inventario)
   const [modalProductoOpen, setModalProductoOpen] = useState(false);
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [formCodigo, setFormCodigo] = useState("");
@@ -140,13 +133,12 @@ export function FinancialDashboard(props: any) {
     }
   };
 
-  // --- ESTADOS PARA CREAR VENTA ---
   const [modalVentaOpen, setModalVentaOpen] = useState(false);
   const [carrito, setCarrito] = useState<any[]>([]);
   const [busquedaProducto, setBusquedaProducto] = useState("");
   const [metodoPago, setMetodoPago] = useState("Efectivo");
   const [referenciaPago, setReferenciaPago] = useState("");
-  const [filtroVentas, setFiltroVentas] = useState("dia"); // 'dia', 'semana', 'mes'
+  const [filtroVentas, setFiltroVentas] = useState("dia");
 
   const agregarAlCarrito = (prod: any) => {
     const calc = calcularPrecios(prod.pCompra);
@@ -181,7 +173,6 @@ export function FinancialDashboard(props: any) {
       return;
     }
 
-    // Descontar inventario
     const nuevoInventario = products.map(prod => {
       const enCarrito = carrito.find(c => c.id === prod.id);
       if (enCarrito) {
@@ -191,7 +182,6 @@ export function FinancialDashboard(props: any) {
     });
     setProducts(nuevoInventario);
 
-    // Registrar venta
     const nuevaVenta = {
       id: Date.now().toString(),
       fecha: new Date().toISOString(),
@@ -209,7 +199,6 @@ export function FinancialDashboard(props: any) {
     setModalVentaOpen(false);
   };
 
-  // Filtrado de ventas
   const ventasFiltradas = sales.filter((sale: any) => {
     const fechaVenta = new Date(sale.fecha);
     const ahora = new Date();
@@ -225,7 +214,6 @@ export function FinancialDashboard(props: any) {
     return true;
   });
 
-  // Función para generar reporte PDF imprimible estilo Excel
   const generarReportePDF = () => {
     const ventasDelDia = sales.filter((sale: any) => {
       return new Date(sale.fecha).toDateString() === new Date().toDateString();
@@ -309,7 +297,6 @@ export function FinancialDashboard(props: any) {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      {/* SIDEBAR DE NAVEGACIÓN */}
       <aside className="w-64 bg-white border-r border-gray-200 hidden md:flex flex-col justify-between">
         <div>
           <div className="p-6 border-b border-gray-100">
@@ -366,7 +353,6 @@ export function FinancialDashboard(props: any) {
         </div>
       </aside>
 
-      {/* CONTENIDO PRINCIPAL */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         <header className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-md">
           <div className="max-w-7xl mx-auto px-6 py-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -384,7 +370,6 @@ export function FinancialDashboard(props: any) {
               </p>
             </div>
 
-            {/* Tasa BCV Interactiva */}
             <div className="bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/20 flex items-center gap-3">
               <DollarSign className="w-5 h-5 text-emerald-200" />
               <div>
@@ -467,3 +452,210 @@ export function FinancialDashboard(props: any) {
                     onClick={() => setCurrentSection("inventario")}
                     className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm cursor-pointer hover:border-emerald-500 transition flex items-center justify-between"
                   >
+                    <div>
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Unidades en stock</p>
+                      <p className="text-3xl font-black text-gray-900 mt-2">{totalStock}</p>
+                    </div>
+                    <div className="p-4 bg-blue-50 text-blue-600 rounded-2xl">
+                      <Package className="w-7 h-7" />
+                    </div>
+                  </div>
+
+                  <div 
+                    onClick={() => setCurrentSection("ventas")}
+                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm cursor-pointer hover:border-emerald-500 transition flex items-center justify-between"
+                  >
+                    <div>
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Ventas registradas</p>
+                      <p className="text-3xl font-black text-gray-900 mt-2">{sales?.length || 0}</p>
+                    </div>
+                    <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl">
+                      <CreditCard className="w-7 h-7" />
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+          )}
+
+          {currentSection === "ventas" && (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white rounded-2xl border border-gray-200 p-6 shadow-sm gap-4">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Historial y Registro de Ventas</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Filtra las ventas y genera reportes imprimibles.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                  <div className="flex bg-gray-100 p-1 rounded-xl">
+                    <button 
+                      onClick={() => setFiltroVentas("dia")}
+                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition", filtroVentas === "dia" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                    >
+                      Día
+                    </button>
+                    <button 
+                      onClick={() => setFiltroVentas("semana")}
+                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition", filtroVentas === "semana" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                    >
+                      Semana
+                    </button>
+                    <button 
+                      onClick={() => setFiltroVentas("mes")}
+                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition", filtroVentas === "mes" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                    >
+                      Mes
+                    </button>
+                  </div>
+                  <Button onClick={generarReportePDF} variant="outline" className="border-gray-300 text-gray-700 font-bold flex items-center gap-2">
+                    <Printer className="w-4 h-4" /> Generar Reporte
+                  </Button>
+                  <Button onClick={() => setModalVentaOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-2">
+                    <Plus className="w-4 h-4" /> Nueva Venta
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {ventasFiltradas && ventasFiltradas.length > 0 ? (
+                  ventasFiltradas.map((sale: any) => (
+                    <div key={sale.id} className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-4 gap-2">
+                        <div>
+                          <span className="text-xs font-bold px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-lg">
+                            Pago: {sale.metodoPago} {sale.referencia ? `(Ref: ${sale.referencia})` : ""}
+                          </span>
+                          <p className="text-xs text-gray-400 mt-2">{new Date(sale.fecha).toLocaleString()}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-black text-emerald-600">${sale.totalDolares.toFixed(2)}</p>
+                          <p className="text-xs font-bold text-gray-500">{sale.totalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-gray-500 uppercase">Productos vendidos:</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {sale.items.map((item: any, idx: number) => (
+                            <div key={idx} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-xl text-xs">
+                              <span className="font-bold text-gray-800">{item.qty}x {item.nombre}</span>
+                              <span className="text-gray-600">${(item.pVenta * item.qty).toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center text-gray-500">
+                    No hay ventas registradas para este filtro de tiempo.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {currentSection === "inventario" && (
+            <div className="space-y-6">
+              <div className="flex justify-between items-center bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Inventario y Precios Automáticos</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Los precios de venta y bolívares se calculan con base en la Tasa BCV ({tasaBcv} BS).</p>
+                </div>
+                <Button onClick={abrirModalNuevo} className="bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-2">
+                  <Plus className="w-4 h-4" /> Agregar Producto
+                </Button>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200 text-xs font-black text-gray-600 uppercase tracking-wider">
+                        <th className="py-4 px-6">Código</th>
+                        <th className="py-4 px-6">Nombre</th>
+                        <th className="py-4 px-6 text-center">Cantidad</th>
+                        <th className="py-4 px-6 text-right">P. Compra ($)</th>
+                        <th className="py-4 px-6 text-right">P. Venta ($)</th>
+                        <th className="py-4 px-6 text-right">P. Final (BS)</th>
+                        <th className="py-4 px-6 text-center">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 text-sm">
+                      {products && products.length > 0 ? (
+                        products.map((prod: any) => {
+                          const calc = calcularPrecios(prod.pCompra);
+                          return (
+                            <tr key={prod.id} className="hover:bg-gray-50/80 transition">
+                              <td className="py-4 px-6 font-mono font-bold text-gray-700">{prod.codigo}</td>
+                              <td className="py-4 px-6 font-bold text-gray-900">{prod.nombre}</td>
+                              <td className="py-4 px-6 text-center">
+                                <span className={cn("px-2.5 py-1 rounded-lg text-xs font-bold", prod.cantidad > 0 ? "bg-blue-50 text-blue-700" : "bg-red-50 text-red-700")}>
+                                  {prod.cantidad} un.
+                                </span>
+                              </td>
+                              <td className="py-4 px-6 text-right font-medium text-gray-600">${prod.pCompra.toFixed(2)}</td>
+                              <td className="py-4 px-6 text-right font-bold text-emerald-600">${calc.pVenta.toFixed(2)}</td>
+                              <td className="py-4 px-6 text-right font-black text-gray-900">{calc.pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</td>
+                              <td className="py-4 px-6 text-center flex items-center justify-center gap-2">
+                                <button 
+                                  onClick={() => abrirModalEditar(prod)} 
+                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                                  title="Editar"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={() => eliminarProducto(prod.id)} 
+                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition"
+                                  title="Eliminar"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={7} className="text-center py-12 text-gray-500">
+                            No hay productos registrados en el inventario. Haz clic en "Agregar Producto".
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {modalVentaOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-black text-gray-900">Registrar Nueva Venta</h3>
+              <button 
+                onClick={() => setModalVentaOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Buscar producto en inventario</label>
+                <div className="relative">
+                  <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
+                  <input 
+                    type="text" 
+                    value={busquedaProducto}
+                    onChange={(e) => setBusquedaProducto(e.target.value)}
+                    placeholder="Escribe el nombre o código del repuesto..."
+                    className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                {busquedaProducto
