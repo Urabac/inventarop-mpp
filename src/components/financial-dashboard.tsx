@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 
 // --- CONFIGURACIÓN DE FIREBASE ---
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, onSnapshot } from "firebase/firestore";
+import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc, onSnapshot } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDXvWnkdShjz__lIZKIZY2qaEhRrcp_gCo",
@@ -34,7 +34,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// --- COLECCIONES ESPECÍFICAS PARA EVITAR CRUCES CON OTROS PROYECTOS ---
+// --- COLECCIONES AISLADAS PARA MOTO PARTES PIRUETA ---
 const COLLECTION_INVENTARIO = "motopartes_pirueta_inventario";
 const COLLECTION_VENTAS = "motopartes_pirueta_ventas";
 const COLLECTION_CONFIG = "motopartes_pirueta_configuracion";
@@ -55,22 +55,19 @@ export function FinancialDashboard(props: any) {
   const [sales, setSales] = useState<any[]>([]);
   const [busquedaInventario, setBusquedaInventario] = useState("");
 
-  // SINCRONIZACIÓN EN TIEMPO REAL CON COLECCIONES AISLADAS
+  // SINCRONIZACIÓN EN TIEMPO REAL CON FIRESTORE
   useEffect(() => {
-    // 1. Escuchar Inventario Exclusivo
     const unsubProducts = onSnapshot(collection(db, COLLECTION_INVENTARIO), (snapshot) => {
       const listaProd = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setProducts(listaProd);
     });
 
-    // 2. Escuchar Ventas Exclusivas
     const unsubSales = onSnapshot(collection(db, COLLECTION_VENTAS), (snapshot) => {
       const listaVentas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       listaVentas.sort((a: any, b: any) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
       setSales(listaVentas);
     });
 
-    // 3. Escuchar Configuración Exclusiva (Tasa BCV)
     const unsubTasa = onSnapshot(doc(db, COLLECTION_CONFIG, "bcv"), (docSnap) => {
       if (docSnap.exists()) {
         const val = docSnap.data().valor;
@@ -86,7 +83,6 @@ export function FinancialDashboard(props: any) {
     };
   }, []);
 
-  // Guardar Tasa BCV en la configuración aislada
   const guardarTasa = async () => {
     const val = parseFloat(tempTasa);
     if (!isNaN(val) && val > 0) {
@@ -135,11 +131,8 @@ export function FinancialDashboard(props: any) {
     setModalProductoOpen(true);
   };
 
-  // Guardar / Actualizar Producto en la colección exclusiva de Inventario
-const guardarProducto = async (e: React.FormEvent) => {
+  const guardarProducto = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Intentando guardar producto...", { formCodigo, formNombre, formCantidad, formPCompra });
-
     const pCompraNum = parseFloat(formPCompra) || 0;
     const cantidadNum = parseInt(formCantidad) || 0;
 
@@ -159,9 +152,10 @@ const guardarProducto = async (e: React.FormEvent) => {
       setModalProductoOpen(false);
     } catch (error) {
       console.error("Error al guardar en Firebase:", error);
-      alert("Hubo un error al guardar el producto en la base de datos. Revisa la consola.");
+      alert("Hubo un error al guardar el producto.");
     }
   };
+
   const eliminarProducto = async (id: string) => {
     if (confirm("¿Estás seguro de eliminar este producto?")) {
       await deleteDoc(doc(db, COLLECTION_INVENTARIO, id));
@@ -215,7 +209,6 @@ const guardarProducto = async (e: React.FormEvent) => {
   const totalVentaDolares = carrito.reduce((sum, item) => sum + (item.pVenta * item.qty), 0);
   const totalVentaBs = carrito.reduce((sum, item) => sum + (item.pFinalBs * item.qty), 0);
 
-  // Confirmar Venta y registrar en la colección exclusiva de Ventas
   const confirmarVenta = async () => {
     if (carrito.length === 0) {
       alert("El carrito está vacío.");
@@ -234,7 +227,6 @@ const guardarProducto = async (e: React.FormEvent) => {
       }
     }
 
-    // Descontar inventario en Firestore
     for (let enCarrito of carrito) {
       const prodActual = products.find(p => p.id === enCarrito.id);
       if (prodActual) {
@@ -854,7 +846,7 @@ const guardarProducto = async (e: React.FormEvent) => {
         </div>
       )}
 
-     {modalProductoOpen && (
+      {modalProductoOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100">
             <div className="flex justify-between items-center mb-6">
@@ -955,3 +947,6 @@ const guardarProducto = async (e: React.FormEvent) => {
           </div>
         </div>
       )}
+    </div>
+  );
+}
