@@ -1,4 +1,12 @@
 import React, { useState, useEffect } from "react";
+import { 
+  ShoppingBag, 
+  Package, 
+  Boxes, 
+  CreditCard, 
+  ArrowUpRight, 
+  ArrowDownLeft 
+} from "lucide-react";
 
 export function FinancialDashboard(props: any) {
   const {
