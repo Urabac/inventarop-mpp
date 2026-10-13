@@ -7,6 +7,7 @@ import {
   ArrowUpRight, 
   ArrowDownLeft 
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export function FinancialDashboard(props: any) {
   const {
