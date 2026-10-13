@@ -38,23 +38,23 @@ export async function subscribeAppData(handlers: DataHandlers) {
       ),
     );
   };
-  watch<Product>("products", handlers.products);
-  watch<Client>("clients", handlers.clients);
-  watch<Sale>("sales", handlers.sales, true);
-  watch<Loan>("loans", handlers.loans, true);
-  watch<Ficha>("fichas", handlers.fichas, true);
-  watch<Purchase>("purchases", handlers.purchases, true);
+  watch<Product>("products_express", handlers.products);
+  watch<Client>("clients_express", handlers.clients);
+  watch<Sale>("sales_express", handlers.sales, true);
+  watch<Loan>("loans_express", handlers.loans, true);
+  watch<Ficha>("fichas_express", handlers.fichas, true);
+  watch<Purchase>("purchases_express", handlers.purchases, true);
   return () => subscriptions.forEach((unsubscribe) => unsubscribe());
 }
 
 export async function saveClient(client: Client) {
   const { db } = await getFirebaseServices();
-  await setDoc(doc(db, "clients", client.id), client);
+  await setDoc(doc(db, "clients_express", client.id), client);
 }
 
 export async function saveProduct(product: Product) {
   const { db } = await getFirebaseServices();
-  await setDoc(doc(db, "products", product.code), product);
+  await setDoc(doc(db, "products_express", product.code), product);
 }
 
 export async function saveSale(sale: Sale, clientName: string) {
@@ -63,7 +63,7 @@ export async function saveSale(sale: Sale, clientName: string) {
     const lines = sale.items?.length
       ? sale.items
       : [{ productCode: sale.productCode, quantity: 1 }];
-    const productRefs = lines.map((line) => doc(db, "products", line.productCode));
+    const productRefs = lines.map((line) => doc(db, "products_express", line.productCode));
     const snapshots = await Promise.all(productRefs.map((reference) => transaction.get(reference)));
     snapshots.forEach((snapshot, index) => {
       const line = lines[index];
@@ -90,9 +90,9 @@ export async function saveSale(sale: Sale, clientName: string) {
           stock: Number(snapshot.data()?.["stock"] ?? 0) - line.quantity,
         });
     });
-    transaction.set(doc(db, "sales", sale.id), sale);
-    transaction.set(doc(db, "fichas", ficha.id), ficha);
-    transaction.set(doc(db, "collections", ficha.id), {
+    transaction.set(doc(db, "sales_express", sale.id), sale);
+    transaction.set(doc(db, "fichas_express", ficha.id), ficha);
+    transaction.set(doc(db, "collections_express", ficha.id), {
       ...ficha,
       installments: sale.installments,
       financed: sale.financed,
@@ -113,9 +113,9 @@ export async function saveLoan(loan: Loan, clientName: string) {
     item: loan,
   };
   const batch = writeBatch(db);
-  batch.set(doc(db, "loans", loan.id), loan);
-  batch.set(doc(db, "fichas", ficha.id), ficha);
-  batch.set(doc(db, "collections", ficha.id), {
+  batch.set(doc(db, "loans_express", loan.id), loan);
+  batch.set(doc(db, "fichas_express", ficha.id), ficha);
+  batch.set(doc(db, "collections_express", ficha.id), {
     ...ficha,
     installments: loan.installments,
     financed: loan.total,
@@ -127,9 +127,9 @@ export async function savePayment(kind: "sale" | "loan", item: Sale | Loan) {
   const { db } = await getFirebaseServices();
   const fichaId = `${kind}_${item.id}`;
   const batch = writeBatch(db);
-  batch.set(doc(db, kind === "sale" ? "sales" : "loans", item.id), item);
-  batch.set(doc(db, "fichas", fichaId), { item }, { merge: true });
-  batch.set(doc(db, "collections", fichaId), { installments: item.installments }, { merge: true });
+  batch.set(doc(db, kind === "sale" ? "sales_express" : "loans_express", item.id), item);
+  batch.set(doc(db, "fichas_express", fichaId), { item }, { merge: true });
+  batch.set(doc(db, "collections_express", fichaId), { installments: item.installments }, { merge: true });
   await batch.commit();
 }
 
@@ -138,15 +138,15 @@ export async function saveFinancingEdit(kind: "sale" | "loan", item: Sale | Loan
   const fichaId = `${kind}_${item.id}`;
   const financed = kind === "sale" ? (item as Sale).financed : (item as Loan).total;
   const batch = writeBatch(db);
-  batch.set(doc(db, "clients", client.id), client);
-  batch.set(doc(db, kind === "sale" ? "sales" : "loans", item.id), item);
+  batch.set(doc(db, "clients_express", client.id), client);
+  batch.set(doc(db, kind === "sale" ? "sales_express" : "loans_express", item.id), item);
   batch.set(
-    doc(db, "fichas", fichaId),
+    doc(db, "fichas_express", fichaId),
     { clientName: client.name, clientId: client.id, item },
     { merge: true },
   );
   batch.set(
-    doc(db, "collections", fichaId),
+    doc(db, "collections_express", fichaId),
     {
       clientName: client.name,
       clientId: client.id,
@@ -162,7 +162,7 @@ export async function saveFinancingEdit(kind: "sale" | "loan", item: Sale | Loan
 export async function savePurchase(purchase: Purchase) {
   const { db } = await getFirebaseServices();
   await runTransaction(db, async (transaction) => {
-    const productRefs = purchase.items.map((item) => doc(db, "products", item.productCode));
+    const productRefs = purchase.items.map((item) => doc(db, "products_express", item.productCode));
     const snapshots = await Promise.all(productRefs.map((reference) => transaction.get(reference)));
     snapshots.forEach((snapshot, index) => {
       const item = purchase.items[index];
@@ -172,6 +172,6 @@ export async function savePurchase(purchase: Purchase) {
         transaction.update(reference, { stock: currentStock + item.quantity });
       }
     });
-    transaction.set(doc(db, "purchases", purchase.id), purchase);
+    transaction.set(doc(db, "purchases_express", purchase.id), purchase);
   });
 }
