@@ -366,7 +366,7 @@ export function FinancialDashboard(props: any) {
                 </Button>
               </div>
 
-              {/* Tabla estilo Excel */}
+             {/* Tabla estilo Excel */}
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
@@ -378,4 +378,52 @@ export function FinancialDashboard(props: any) {
                         <th className="py-4 px-6 text-right">P. Compra ($)</th>
                         <th className="py-4 px-6 text-right">P. Venta ($)</th>
                         <th className="py-4 px-6 text-right">P. Final (BS)</th>
-                        <th className="
+                        <th className="py-4 px-6 text-center">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 text-sm">
+                      {products && products.length > 0 ? (
+                        products.map((prod: any) => {
+                          const calc = calcularPrecios(prod.pCompra);
+                          return (
+                            <tr key={prod.id} className="hover:bg-gray-50/80 transition">
+                              <td className="py-4 px-6 font-mono font-bold text-gray-700">{prod.codigo}</td>
+                              <td className="py-4 px-6 font-bold text-gray-900">{prod.nombre}</td>
+                              <td className="py-4 px-6 text-center">
+                                <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold">
+                                  {prod.cantidad} un.
+                                </span>
+                              </td>
+                              <td className="py-4 px-6 text-right font-medium text-gray-600">${prod.pCompra.toFixed(2)}</td>
+                              <td className="py-4 px-6 text-right font-bold text-emerald-600">${calc.pVenta.toFixed(2)}</td>
+                              <td className="py-4 px-6 text-right font-black text-gray-900">{calc.pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</td>
+                              <td className="py-4 px-6 text-center flex items-center justify-center gap-2">
+                                <button 
+                                  onClick={() => abrirModalEditar(prod)} 
+                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                                  title="Editar"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={() => eliminarProducto(prod.id)} 
+                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition"
+                                  title="Eliminar"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={7} className="text-center py-12 text-gray-500">
+                            No hay productos registrados en el inventario. Haz clic en "Agregar Producto".
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
