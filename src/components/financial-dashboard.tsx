@@ -99,7 +99,7 @@ export function FinancialDashboard(props: any) {
         >
           <div>
             <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Unidades en stock</p>
-            <p className="text-2xl font-black text-gray-900 mt-1">{products.reduce((sum, item) => sum + item.stock, 0)}</p>
+            <p className="text-2xl font-black text-gray-900 mt-1">{products?.reduce((sum, item) => sum + (item.stock || 0), 0) || 0}</p>
           </div>
           <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
             <Package className="w-6 h-6" />
@@ -112,7 +112,7 @@ export function FinancialDashboard(props: any) {
         >
           <div>
             <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Ventas</p>
-            <p className="text-2xl font-black text-gray-900 mt-1">{sales.length}</p>
+            <p className="text-2xl font-black text-gray-900 mt-1">{sales?.length || 0}</p>
           </div>
           <div className="p-3 bg-green-50 text-green-600 rounded-xl">
             <CreditCard className="w-6 h-6" />
