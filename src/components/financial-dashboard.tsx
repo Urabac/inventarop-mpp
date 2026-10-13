@@ -33,7 +33,7 @@ export function FinancialDashboard(props: any) {
   // Tasa BCV y su estado de edición
   const [tasaBcv, setTasaBcv] = useState<number>(() => {
     const saved = localStorage.getItem("tasa_bcv");
-    return saved ? parseFloat(saved) : 877.65; // Valor por defecto
+    return saved ? parseFloat(saved) : 877.65;
   });
   const [editandoTasa, setEditandoTasa] = useState(false);
   const [tempTasa, setTempTasa] = useState(tasaBcv.toString());
@@ -109,7 +109,6 @@ export function FinancialDashboard(props: any) {
     const cantidadNum = parseInt(formCantidad) || 0;
 
     if (editandoId) {
-      // Editar existente
       setProducts(products.map(p => p.id === editandoId ? {
         ...p,
         codigo: formCodigo,
@@ -118,7 +117,6 @@ export function FinancialDashboard(props: any) {
         pCompra: pCompraNum
       } : p));
     } else {
-      // Crear nuevo
       const nuevoProd = {
         id: Date.now().toString(),
         codigo: formCodigo || `MP-${Math.floor(Math.random() * 900 + 100)}`,
@@ -137,7 +135,6 @@ export function FinancialDashboard(props: any) {
     }
   };
 
-  // Cálculo total de unidades en stock
   const totalStock = products.reduce((acc, item) => acc + (Number(item.cantidad) || 0), 0);
 
   return (
@@ -201,7 +198,6 @@ export function FinancialDashboard(props: any) {
 
       {/* CONTENIDO PRINCIPAL */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        {/* ENCABEZADO SUPERIOR CON TASA BCV */}
         <header className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-md">
           <div className="max-w-7xl mx-auto px-6 py-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
@@ -218,7 +214,7 @@ export function FinancialDashboard(props: any) {
               </p>
             </div>
 
-            {/* Subtítulo y Tasa BCV Interactiva */}
+            {/* Tasa BCV Interactiva */}
             <div className="bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/20 flex items-center gap-3">
               <DollarSign className="w-5 h-5 text-emerald-200" />
               <div>
@@ -252,11 +248,9 @@ export function FinancialDashboard(props: any) {
           </div>
         </header>
 
-        {/* CONTENEDOR CON MÁRGENES CÓMODOS */}
         <div className="max-w-7xl w-full mx-auto px-6 py-8">
           {currentSection === "inicio" && (
             <div className="space-y-8">
-              {/* Acciones rápidas */}
               <div>
                 <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4">Acciones rápidas</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -294,7 +288,6 @@ export function FinancialDashboard(props: any) {
                 </div>
               </div>
 
-              {/* Tarjetas de Resumen */}
               <div>
                 <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4">Resumen general</h3>
                 <section className="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -366,7 +359,6 @@ export function FinancialDashboard(props: any) {
                 </Button>
               </div>
 
-             {/* Tabla estilo Excel */}
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
@@ -427,3 +419,112 @@ export function FinancialDashboard(props: any) {
                   </table>
                 </div>
               </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* MODAL PARA AGREGAR / EDITAR PRODUCTO */}
+      {modalProductoOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-black text-gray-900">
+                {editandoId ? "Editar Producto" : "Nuevo Producto en Inventario"}
+              </h3>
+              <button 
+                onClick={() => setModalProductoOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={guardarProducto} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Código</label>
+                <input 
+                  type="text" 
+                  value={formCodigo}
+                  onChange={(e) => setFormCodigo(e.target.value)}
+                  placeholder="Ej: MP-003"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nombre del Producto</label>
+                <input 
+                  type="text" 
+                  value={formNombre}
+                  onChange={(e) => setFormNombre(e.target.value)}
+                  placeholder="Ej: Pastillas de freno trasera"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Cantidad</label>
+                  <input 
+                    type="number" 
+                    value={formCantidad}
+                    onChange={(e) => setFormCantidad(e.target.value)}
+                    placeholder="10"
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Precio Compra ($)</label>
+                  <input 
+                    type="number" 
+                    step="0.01"
+                    value={formPCompra}
+                    onChange={(e) => setFormPCompra(e.target.value)}
+                    placeholder="5.00"
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              {formPCompra && !isNaN(parseFloat(formPCompra)) && (
+                <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-2 mt-4">
+                  <p className="text-xs font-bold text-gray-500 uppercase">Cálculos automáticos en vivo:</p>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Precio Venta ($):</span>
+                    <span className="font-bold text-emerald-600">${calcularPrecios(parseFloat(formPCompra)).pVenta.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Precio Final (BS):</span>
+                    <span className="font-black text-gray-900">{calcularPrecios(parseFloat(formPCompra)).pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setModalProductoOpen(false)}
+                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm"
+                >
+                  {editandoId ? "Actualizar Producto" : "Guardar Producto"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
