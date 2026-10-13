@@ -617,8 +617,8 @@ function Dashboard({
   useEffect(() => setCurrentDate(localToday()), []);
   const periods: Period[] = ["Hoy", "Ayer", "Últimos 7 días", "Este mes"];
 const actions = [
-  { title: "Crear venta", icon: ShoppingBag, tone: "bg-action-yellow", type: "venta" as const },
-];
+    { title: "Crear venta", icon: ShoppingBag, tone: "bg-action-yellow", type: "venta" as const },
+  ];
   return (
     <div className="space-y-7">
       <section>
@@ -677,74 +677,6 @@ const actions = [
           </Button>
         </div>
       </section>
-      <section>
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="eyebrow">Progreso de cobros</p>
-              <p className="mt-1 text-xs text-muted-foreground">Toca para ver el desglose</p>
-            </div>
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label="Ver desglose"
-              onClick={() => setShowBreakdown((value) => !value)}
-            >
-              {showBreakdown ? <ChevronUp /> : <TrendingUp />}
-            </Button>
-          </div>
-          <h2 className="mt-6 text-3xl font-extrabold">
-            {money(totals.collected)}{" "}
-            <span className="text-sm font-medium text-muted-foreground">
-              de {money(totals.financed)}
-            </span>
-          </h2>
-          <div className="mt-5 flex justify-between text-xs">
-            <span className="font-bold text-primary">Meta del período</span>
-            <span className="rounded-lg bg-secondary px-2 py-1 font-bold text-primary">
-              {progress}%
-            </span>
-          </div>
-          <div className="mt-2 h-3 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary transition-[width] duration-500"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <div className="mt-6 grid grid-cols-2 gap-4 border-t border-border pt-5">
-            <Metric label="Pendiente" value={money(totals.pending)} dot="bg-warning" />
-            <Metric label="Cobrado" value={money(totals.collected)} dot="bg-primary" />
-          </div>
-          {showBreakdown && (
-            <div className="mt-5 grid gap-2 border-t border-border pt-5 sm:grid-cols-2">
-              <div className="rounded-xl bg-muted p-3">
-                <p className="text-xs text-muted-foreground">Ventas activas</p>
-                <p className="mt-1 font-bold">{sales.length}</p>
-              </div>
-              <div className="rounded-xl bg-muted p-3">
-                <p className="text-xs text-muted-foreground">Préstamos activos</p>
-                <p className="mt-1 font-bold">{loans.length}</p>
-              </div>
-            </div>
-          )}
-        </div>
-      </section>
-    <section className="grid gap-5 sm:grid-cols-2">
-        <SummaryCard
-          icon={Package}
-          label="Unidades en stock"
-          value={String(products.reduce((sum, item) => sum + item.stock, 0))}
-          onClick={() => setSection("inventario")}
-        />
-        <SummaryCard
-          icon={CreditCard}
-          label="Ventas"
-          value={String(sales.length)}
-          onClick={() => setSection("ventas")}
-      </section>
-    </div>
-  );
-}
 function Metric({ label, value, dot }: { label: string; value: string; dot: string }) {
   return (
     <div>
