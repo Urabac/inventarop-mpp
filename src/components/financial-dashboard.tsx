@@ -114,5 +114,5 @@ export function Dashboard({
   );
 }
 export function FinancialDashboard(props: any) {
-  return <DashboardApp {...props} />;
+  return <Dashboard {...props} />;
 }
