@@ -44,7 +44,7 @@ export function FinancialDashboard(props: any) {
       <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-sidebar-primary to-sidebar-accent p-6 text-sidebar-primary-foreground shadow-lg sm:p-8">
         <div className="relative z-10 max-w-2xl">
           <span className="inline-block rounded-full bg-sidebar-primary-foreground/15 px-3 py-1 text-xs font-semibold tracking-wider uppercase backdrop-blur-md">
-            Río Market Express
+            Moto partes pirueta
           </span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-4xl">
             Panel Principal
