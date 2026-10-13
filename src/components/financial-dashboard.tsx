@@ -285,4 +285,530 @@ export function FinancialDashboard(props: any) {
         </div>
       </aside>
 
-      {
+      {/* CONTENIDO PRINCIPAL */}
+      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+        <header className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-md">
+          <div className="max-w-7xl mx-auto px-6 py-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <span className="bg-white/20 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+                Moto Partes Pirueta
+              </span>
+              <h2 className="text-3xl font-black mt-2">
+                {currentSection === "inicio" && "Panel Principal"}
+                {currentSection === "ventas" && "Módulo de Ventas"}
+                {currentSection === "inventario" && "Módulo de Inventario"}
+              </h2>
+              <p className="text-emerald-100 text-sm mt-1">
+                Control rápido de inventario, tasas y transacciones del día.
+              </p>
+            </div>
+
+            {/* Tasa BCV Interactiva */}
+            <div className="bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/20 flex items-center gap-3">
+              <DollarSign className="w-5 h-5 text-emerald-200" />
+              <div>
+                <p className="text-xs text-emerald-100 font-medium">Precio del dólar BCV:</p>
+                {editandoTasa ? (
+                  <div className="flex items-center gap-2 mt-1">
+                    <input 
+                      type="number" 
+                      step="0.01"
+                      value={tempTasa}
+                      onChange={(e) => setTempTasa(e.target.value)}
+                      className="w-28 px-2 py-1 text-gray-900 text-sm rounded font-bold bg-white"
+                    />
+                    <button onClick={guardarTasa} className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-bold rounded">
+                      Confirmar
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-bold text-white">
+                      {tasaBcv.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS
+                    </span>
+                    <button 
+                      onClick={() => { setTempTasa(tasaBcv.toString()); setEditandoTasa(true); }}
+                      className="text-xs bg-white/20 hover:bg-white/30 text-white px-2 py-0.5 rounded font-medium transition"
+                    >
+                      Asignar / Editar
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div className="max-w-7xl w-full mx-auto px-6 py-8">
+          {currentSection === "inicio" && (
+            <div className="space-y-8">
+              <div>
+                <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4">Acciones rápidas</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <button 
+                    onClick={() => { setModalVentaOpen(true); }}
+                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm hover:border-emerald-500 hover:shadow-md transition text-left flex items-center justify-between group"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl group-hover:bg-emerald-600 group-hover:text-white transition">
+                        <ShoppingBag className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900">Nueva Venta</p>
+                        <p className="text-xs text-gray-500">Registrar transacción rápida</p>
+                      </div>
+                    </div>
+                    <ArrowUpRight className="w-5 h-5 text-gray-400 group-hover:text-emerald-600" />
+                  </button>
+
+                  <button 
+                    onClick={() => setCurrentSection("inventario")}
+                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm hover:border-emerald-500 hover:shadow-md transition text-left flex items-center justify-between group"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="p-3 bg-blue-50 text-blue-600 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition">
+                        <Package className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900">Ver Inventario</p>
+                        <p className="text-xs text-gray-500">Gestionar productos y precios</p>
+                      </div>
+                    </div>
+                    <ArrowUpRight className="w-5 h-5 text-gray-400 group-hover:text-blue-600" />
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4">Resumen general</h3>
+                <section className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  <div 
+                    onClick={() => setCurrentSection("inventario")}
+                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm cursor-pointer hover:border-emerald-500 transition flex items-center justify-between"
+                  >
+                    <div>
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Unidades en stock</p>
+                      <p className="text-3xl font-black text-gray-900 mt-2">{totalStock}</p>
+                    </div>
+                    <div className="p-4 bg-blue-50 text-blue-600 rounded-2xl">
+                      <Package className="w-7 h-7" />
+                    </div>
+                  </div>
+
+                  <div 
+                    onClick={() => setCurrentSection("ventas")}
+                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm cursor-pointer hover:border-emerald-500 transition flex items-center justify-between"
+                  >
+                    <div>
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Ventas registradas</p>
+                      <p className="text-3xl font-black text-gray-900 mt-2">{sales?.length || 0}</p>
+                    </div>
+                    <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl">
+                      <CreditCard className="w-7 h-7" />
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+          )}
+
+          {currentSection === "ventas" && (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white rounded-2xl border border-gray-200 p-6 shadow-sm gap-4">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Historial y Registro de Ventas</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Filtra las ventas según el período de tiempo deseado.</p>
+                </div>
+                <div className="flex items-center gap-3 w-full sm:w-auto">
+                  <div className="flex bg-gray-100 p-1 rounded-xl">
+                    <button 
+                      onClick={() => setFiltroVentas("dia")}
+                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition", filtroVentas === "dia" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                    >
+                      Día
+                    </button>
+                    <button 
+                      onClick={() => setFiltroVentas("semana")}
+                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition", filtroVentas === "semana" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                    >
+                      Semana
+                    </button>
+                    <button 
+                      onClick={() => setFiltroVentas("mes")}
+                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition", filtroVentas === "mes" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                    >
+                      Mes
+                    </button>
+                  </div>
+                  <Button onClick={() => setModalVentaOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-2">
+                    <Plus className="w-4 h-4" /> Nueva Venta
+                  </Button>
+                </div>
+              </div>
+
+              {/* Lista de ventas filtradas */}
+              <div className="space-y-4">
+                {ventasFiltradas && ventasFiltradas.length > 0 ? (
+                  ventasFiltradas.map((sale: any) => (
+                    <div key={sale.id} className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-4 gap-2">
+                        <div>
+                          <span className="text-xs font-bold px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-lg">
+                            Pago: {sale.metodoPago} {sale.referencia ? `(Ref: ${sale.referencia})` : ""}
+                          </span>
+                          <p className="text-xs text-gray-400 mt-2">{new Date(sale.fecha).toLocaleString()}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-black text-emerald-600">${sale.totalDolares.toFixed(2)}</p>
+                          <p className="text-xs font-bold text-gray-500">{sale.totalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-gray-500 uppercase">Productos vendidos:</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {sale.items.map((item: any, idx: number) => (
+                            <div key={idx} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-xl text-xs">
+                              <span className="font-bold text-gray-800">{item.qty}x {item.nombre}</span>
+                              <span className="text-gray-600">${(item.pVenta * item.qty).toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center text-gray-500">
+                    No hay ventas registradas para este filtro de tiempo.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {currentSection === "inventario" && (
+            <div className="space-y-6">
+              <div className="flex justify-between items-center bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Inventario y Precios Automáticos</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Los precios de venta y bolívares se calculan con base en la Tasa BCV ({tasaBcv} BS).</p>
+                </div>
+                <Button onClick={abrirModalNuevo} className="bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-2">
+                  <Plus className="w-4 h-4" /> Agregar Producto
+                </Button>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200 text-xs font-black text-gray-600 uppercase tracking-wider">
+                        <th className="py-4 px-6">Código</th>
+                        <th className="py-4 px-6">Nombre</th>
+                        <th className="py-4 px-6 text-center">Cantidad</th>
+                        <th className="py-4 px-6 text-right">P. Compra ($)</th>
+                        <th className="py-4 px-6 text-right">P. Venta ($)</th>
+                        <th className="py-4 px-6 text-right">P. Final (BS)</th>
+                        <th className="py-4 px-6 text-center">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 text-sm">
+                      {products && products.length > 0 ? (
+                        products.map((prod: any) => {
+                          const calc = calcularPrecios(prod.pCompra);
+                          return (
+                            <tr key={prod.id} className="hover:bg-gray-50/80 transition">
+                              <td className="py-4 px-6 font-mono font-bold text-gray-700">{prod.codigo}</td>
+                              <td className="py-4 px-6 font-bold text-gray-900">{prod.nombre}</td>
+                              <td className="py-4 px-6 text-center">
+                                <span className={cn("px-2.5 py-1 rounded-lg text-xs font-bold", prod.cantidad > 0 ? "bg-blue-50 text-blue-700" : "bg-red-50 text-red-700")}>
+                                  {prod.cantidad} un.
+                                </span>
+                              </td>
+                              <td className="py-4 px-6 text-right font-medium text-gray-600">${prod.pCompra.toFixed(2)}</td>
+                              <td className="py-4 px-6 text-right font-bold text-emerald-600">${calc.pVenta.toFixed(2)}</td>
+                              <td className="py-4 px-6 text-right font-black text-gray-900">{calc.pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</td>
+                              <td className="py-4 px-6 text-center flex items-center justify-center gap-2">
+                                <button 
+                                  onClick={() => abrirModalEditar(prod)} 
+                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                                  title="Editar"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={() => eliminarProducto(prod.id)} 
+                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition"
+                                  title="Eliminar"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={7} className="text-center py-12 text-gray-500">
+                            No hay productos registrados en el inventario. Haz clic en "Agregar Producto".
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* MODAL PARA CREAR VENTA */}
+      {modalVentaOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-black text-gray-900">Registrar Nueva Venta</h3>
+              <button 
+                onClick={() => setModalVentaOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Buscar producto en inventario</label>
+                <div className="relative">
+                  <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
+                  <input 
+                    type="text" 
+                    value={busquedaProducto}
+                    onChange={(e) => setBusquedaProducto(e.target.value)}
+                    placeholder="Escribe el nombre o código del repuesto..."
+                    className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                {busquedaProducto.trim() !== "" && (
+                  <div className="mt-2 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto divide-y divide-gray-100">
+                    {products.filter(p => p.nombre.toLowerCase().includes(busquedaProducto.toLowerCase()) || p.codigo.toLowerCase().includes(busquedaProducto.toLowerCase())).map(prod => {
+                      const calc = calcularPrecios(prod.pCompra);
+                      return (
+                        <div key={prod.id} className="p-3 flex justify-between items-center hover:bg-gray-50">
+                          <div>
+                            <p className="font-bold text-gray-900 text-sm">{prod.nombre}</p>
+                            <p className="text-xs text-gray-500">Stock: {prod.cantidad} | Venta: ${calc.pVenta} ({calc.pFinalBs} BS)</p>
+                          </div>
+                          <Button 
+                            onClick={() => { agregarAlCarrito(prod); setBusquedaProducto(""); }}
+                            size="sm"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
+                            disabled={prod.cantidad <= 0}
+                          >
+                            {prod.cantidad > 0 ? "Agregar" : "Agotado"}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs font-bold text-gray-500 uppercase">Productos en la venta:</p>
+                {carrito.length > 0 ? (
+                  <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                    {carrito.map(item => (
+                      <div key={item.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border border-gray-100">
+                        <div>
+                          <p className="font-bold text-gray-900 text-sm">{item.nombre}</p>
+                          <p className="text-xs text-gray-500">${item.pVenta} c/u ({item.pFinalBs} BS)</p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-2 bg-white border border-gray-200 px-2 py-1 rounded-lg">
+                            <button onClick={() => cambiarCantidadCarrito(item.id, -1)} className="text-gray-500 font-bold px-1">-</button>
+                            <span className="text-xs font-bold w-4 text-center">{item.qty}</span>
+                            <button onClick={() => cambiarCantidadCarrito(item.id, 1)} className="text-gray-500 font-bold px-1">+</button>
+                          </div>
+                          <span className="font-bold text-emerald-600 text-sm w-16 text-right">${(item.pVenta * item.qty).toFixed(2)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400 py-4 text-center border border-dashed border-gray-200 rounded-xl">Ningún producto seleccionado todavía.</p>
+                )}
+              </div>
+
+              <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-bold text-gray-600">Total Venta ($):</span>
+                  <span className="text-xl font-black text-emerald-700">${totalVentaDolares.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between items-center border-t border-emerald-100/60 pt-2">
+                  <span className="text-sm font-bold text-gray-600">Total Venta (BS):</span>
+                  <span className="text-xl font-black text-gray-900">{totalVentaBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</span>
+                </div>
+
+                <div className="space-y-2 pt-2 border-t border-emerald-100/60">
+                  <label className="block text-xs font-bold text-gray-600 uppercase">Método de Pago</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {["Efectivo", "Divisas", "Pago movil", "Transferencia"].map(metodo => (
+                      <button
+                        key={metodo}
+                        type="button"
+                        onClick={() => setMetodoPago(metodo)}
+                        className={cn(
+                          "py-2 px-3 text-xs font-bold rounded-xl border transition text-center",
+                          metodoPago === metodo ? "bg-emerald-600 text-white border-emerald-600 shadow-sm" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+                        )}
+                      >
+                        {metodo}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {(metodoPago === "Pago movil" || metodoPago === "Transferencia") && (
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Referencia (Últimos 4 dígitos)</label>
+                    <input 
+                      type="text" 
+                      maxLength={4}
+                      value={referenciaPago}
+                      onChange={(e) => setReferenciaPago(e.target.value.replace(/\D/g, ""))}
+                      placeholder="Ej: 4829"
+                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      required
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModalVentaOpen(false)}
+                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition"
+                >
+                  Cancelar
+                </button>
+                <Button
+                  onClick={confirmarVenta}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-sm"
+                  disabled={carrito.length === 0}
+                >
+                  Confirmar y Guardar Venta
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PARA AGREGAR / EDITAR PRODUCTO */}
+      {modalProductoOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-black text-gray-900">
+                {editandoId ? "Editar Producto" : "Nuevo Producto en Inventario"}
+              </h3>
+              <button 
+                onClick={() => setModalProductoOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={guardarProducto} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Código</label>
+                <input 
+                  type="text" 
+                  value={formCodigo}
+                  onChange={(e) => setFormCodigo(e.target.value)}
+                  placeholder="Ej: MP-003"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nombre del Producto</label>
+                <input 
+                  type="text" 
+                  value={formNombre}
+                  onChange={(e) => setFormNombre(e.target.value)}
+                  placeholder="Ej: Pastillas de freno trasera"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Cantidad</label>
+                  <input 
+                    type="number" 
+                    value={formCantidad}
+                    onChange={(e) => setFormCantidad(e.target.value)}
+                    placeholder="10"
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Precio Compra ($)</label>
+                  <input 
+                    type="number" 
+                    step="0.01"
+                    value={formPCompra}
+                    onChange={(e) => setFormPCompra(e.target.value)}
+                    placeholder="5.00"
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              {formPCompra && !isNaN(parseFloat(formPCompra)) && (
+                <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-2 mt-4">
+                  <p className="text-xs font-bold text-gray-500 uppercase">Cálculos automáticos en vivo:</p>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Precio Venta ($):</span>
+                    <span className="font-bold text-emerald-600">${calcularPrecios(parseFloat(formPCompra)).pVenta.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Precio Final (BS):</span>
+                    <span className="font-black text-gray-900">{calcularPrecios(parseFloat(formPCompra)).pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setModalProductoOpen(false)}
+                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm"
+                >
+                  {editandoId ? "Actualizar Producto" : "Guardar Producto"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
