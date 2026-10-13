@@ -113,3 +113,6 @@ export function Dashboard({
     </div>
   );
 }
+export function FinancialDashboard(props: any) {
+  return <DashboardApp {...props} />;
+}
