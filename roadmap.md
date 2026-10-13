@@ -1,0 +1,37 @@
+# Roadmap
+
+- [x] Add required client ID and control number fields to create/edit flows
+- [x] Add weekly, biweekly, and monthly sales schedules
+- [x] Add printable CREDIHOGAR TUMEREMO sales sheet
+- [x] Add direct cash loans with frequency and non-working-day options
+- [x] Add printable loan sheet and mock data
+- [x] Validate desktop and mobile interactions
+- [x] Replace client control number with address and reorder the form
+- [x] Fix clean integer entry for installment counts
+- [x] Match the printable sales sheet to the CREDIHOGAR TUMEREMO reference
+- [x] Replace expense creation with chronological collections control
+- [x] Connect Firebase Authentication and Cloud Firestore
+- [x] Persist clients, products, sales, loans, fichas, and collections
+- [x] Add protected email/password login and sign-out
+- [x] Add searchable Almacén with reusable printable fichas
+- [ ] Validate authenticated persistence after Firebase Authentication and Firestore are activated
+- [x] Add Firestore-backed product editing
+- [x] Support multiple editable-price products per sale
+- [x] Make printed fichas fill a clean A4 page
+- [x] Redesign Collections Control as the requested Excel-style overdue-debt table
+- [x] Add partial payments and pay-in-full actions persisted in Firestore
+- [x] Add weekday filtering to Collections Control
+- [x] Add Collections Control quick access on the dashboard
+- [x] Add Firestore-backed merchandise purchases and inventory investment control
+- [x] Rename Almacén navigation to Compras and add purchase registration
+- [x] Add installment status to Collections Control
+- [x] Remove the Premium banner and show the full local date on the dashboard
+- [x] Add quick product creation inside an active purchase without losing entered data
+- [x] Add interactive client profiles with debt status and sale/loan origin details
+- [x] Align client profile installment metrics with Collections Control
+- [x] Edit client name, debt amount, and installment count while preserving payments
+- [x] Show client IDs beside names in product financing
+- [x] Add real-time client search by name, ID, or document
+- [x] Add quick client creation inside an active sale without losing entered data
+- [x] Add financed-sales search by client name or ID and show ID before name
+- [x] Add filtered Collections Control report printing and PDF export
