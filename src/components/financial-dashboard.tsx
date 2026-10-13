@@ -11,7 +11,8 @@ import {
   Plus,
   X,
   DollarSign,
-  Search
+  Search,
+  Printer
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -224,6 +225,86 @@ export function FinancialDashboard(props: any) {
     return true;
   });
 
+  // Función para generar reporte PDF imprimible estilo Excel
+  const generarReportePDF = () => {
+    const ventasDelDia = sales.filter((sale: any) => {
+      return new Date(sale.fecha).toDateString() === new Date().toDateString();
+    });
+
+    if (ventasDelDia.length === 0) {
+      alert("No hay ventas registradas el día de hoy para generar el reporte.");
+      return;
+    }
+
+    const totalDolarDia = ventasDelDia.reduce((acc, s) => acc + s.totalDolares, 0);
+    const totalBsDia = ventasDelDia.reduce((acc, s) => acc + s.totalBs, 0);
+
+    const ventanaReporte = window.open("", "_blank");
+    if (!ventanaReporte) return;
+
+    ventanaReporte.document.write(`
+      <html>
+        <head>
+          <title>Reporte de Ventas - Moto Partes Pirueta</title>
+          <style>
+            body { font-family: Arial, sans-serif; color: #333; margin: 30px; }
+            h2 { text-align: center; color: #047857; margin-bottom: 5px; }
+            p.subtitle { text-align: center; font-size: 12px; color: #666; margin-top: 0; }
+            .info { margin: 20px 0; font-size: 14px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
+            th, td { border: 1px solid #cbd5e1; padding: 10px; text-align: left; }
+            th { background-color: #f1f5f9; color: #1e293b; font-weight: bold; }
+            td.num, th.num { text-align: right; }
+            .totales { margin-top: 20px; text-align: right; font-size: 15px; font-weight: bold; }
+            .print-btn { margin-top: 30px; text-align: center; }
+            .print-btn button { background: #047857; color: white; border: none; padding: 10px 20px; font-size: 14px; border-radius: 6px; cursor: pointer; }
+            @media print { .print-btn { display: none; } }
+          </style>
+        </head>
+        <body>
+          <h2>MOTO PARTES PIRUETA - RÍO MARKET</h2>
+          <p class="subtitle">Reporte Diario de Ventas</p>
+          <div class="info">
+            <strong>Fecha del reporte:</strong> ${new Date().toLocaleDateString()} <br>
+            <strong>Tasa BCV aplicada:</strong> ${tasaBcv} BS
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>ID / Hora</th>
+                <th>Método de Pago</th>
+                <th>Ref.</th>
+                <th>Productos Vendidos</th>
+                <th class="num">Total ($)</th>
+                <th class="num">Total (BS)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${ventasDelDia.map(s => `
+                <tr>
+                  <td>${new Date(s.fecha).toLocaleTimeString()}</td>
+                  <td>${s.metodoPago}</td>
+                  <td>${s.referencia || "N/A"}</td>
+                  <td>${s.items.map((i: any) => `${i.qty}x ${i.nombre}`).join(", ")}</td>
+                  <td class="num">$${s.totalDolares.toFixed(2)}</td>
+                  <td class="num">${s.totalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+          <div class="totales">
+            <p>Total del Día ($): $${totalDolarDia.toFixed(2)}</p>
+            <p>Total del Día (BS): ${totalBsDia.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</p>
+          </div>
+          <div class="print-btn">
+            <button onclick="window.print()">Imprimir / Guardar como PDF</button>
+          </div>
+        </body>
+      </html>
+    `);
+    ventanaReporte.document.close();
+  };
+
   const totalStock = products.reduce((acc, item) => acc + (Number(item.cantidad) || 0), 0);
 
   return (
@@ -417,9 +498,9 @@ export function FinancialDashboard(props: any) {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white rounded-2xl border border-gray-200 p-6 shadow-sm gap-4">
                 <div>
                   <h3 className="text-lg font-bold text-gray-900">Historial y Registro de Ventas</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Filtra las ventas según el período de tiempo deseado.</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Filtra las ventas y genera reportes imprimibles.</p>
                 </div>
-                <div className="flex items-center gap-3 w-full sm:w-auto">
+                <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
                   <div className="flex bg-gray-100 p-1 rounded-xl">
                     <button 
                       onClick={() => setFiltroVentas("dia")}
@@ -440,6 +521,9 @@ export function FinancialDashboard(props: any) {
                       Mes
                     </button>
                   </div>
+                  <Button onClick={generarReportePDF} variant="outline" className="border-gray-300 text-gray-700 font-bold flex items-center gap-2">
+                    <Printer className="w-4 h-4" /> Generar Reporte
+                  </Button>
                   <Button onClick={() => setModalVentaOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-2">
                     <Plus className="w-4 h-4" /> Nueva Venta
                   </Button>
@@ -599,216 +683,4 @@ export function FinancialDashboard(props: any) {
                         <div key={prod.id} className="p-3 flex justify-between items-center hover:bg-gray-50">
                           <div>
                             <p className="font-bold text-gray-900 text-sm">{prod.nombre}</p>
-                            <p className="text-xs text-gray-500">Stock: {prod.cantidad} | Venta: ${calc.pVenta} ({calc.pFinalBs} BS)</p>
-                          </div>
-                          <Button 
-                            onClick={() => { agregarAlCarrito(prod); setBusquedaProducto(""); }}
-                            size="sm"
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
-                            disabled={prod.cantidad <= 0}
-                          >
-                            {prod.cantidad > 0 ? "Agregar" : "Agotado"}
-                          </Button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <p className="text-xs font-bold text-gray-500 uppercase">Productos en la venta:</p>
-                {carrito.length > 0 ? (
-                  <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                    {carrito.map(item => (
-                      <div key={item.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border border-gray-100">
-                        <div>
-                          <p className="font-bold text-gray-900 text-sm">{item.nombre}</p>
-                          <p className="text-xs text-gray-500">${item.pVenta} c/u ({item.pFinalBs} BS)</p>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center gap-2 bg-white border border-gray-200 px-2 py-1 rounded-lg">
-                            <button onClick={() => cambiarCantidadCarrito(item.id, -1)} className="text-gray-500 font-bold px-1">-</button>
-                            <span className="text-xs font-bold w-4 text-center">{item.qty}</span>
-                            <button onClick={() => cambiarCantidadCarrito(item.id, 1)} className="text-gray-500 font-bold px-1">+</button>
-                          </div>
-                          <span className="font-bold text-emerald-600 text-sm w-16 text-right">${(item.pVenta * item.qty).toFixed(2)}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-400 py-4 text-center border border-dashed border-gray-200 rounded-xl">Ningún producto seleccionado todavía.</p>
-                )}
-              </div>
-
-              <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm font-bold text-gray-600">Total Venta ($):</span>
-                  <span className="text-xl font-black text-emerald-700">${totalVentaDolares.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between items-center border-t border-emerald-100/60 pt-2">
-                  <span className="text-sm font-bold text-gray-600">Total Venta (BS):</span>
-                  <span className="text-xl font-black text-gray-900">{totalVentaBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</span>
-                </div>
-
-                <div className="space-y-2 pt-2 border-t border-emerald-100/60">
-                  <label className="block text-xs font-bold text-gray-600 uppercase">Método de Pago</label>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {["Efectivo", "Divisas", "Pago movil", "Transferencia"].map(metodo => (
-                      <button
-                        key={metodo}
-                        type="button"
-                        onClick={() => setMetodoPago(metodo)}
-                        className={cn(
-                          "py-2 px-3 text-xs font-bold rounded-xl border transition text-center",
-                          metodoPago === metodo ? "bg-emerald-600 text-white border-emerald-600 shadow-sm" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
-                        )}
-                      >
-                        {metodo}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {(metodoPago === "Pago movil" || metodoPago === "Transferencia") && (
-                  <div>
-                    <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Referencia (Últimos 4 dígitos)</label>
-                    <input 
-                      type="text" 
-                      maxLength={4}
-                      value={referenciaPago}
-                      onChange={(e) => setReferenciaPago(e.target.value.replace(/\D/g, ""))}
-                      placeholder="Ej: 4829"
-                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      required
-                    />
-                  </div>
-                )}
-              </div>
-
-              <div className="flex justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setModalVentaOpen(false)}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition"
-                >
-                  Cancelar
-                </button>
-                <Button
-                  onClick={confirmarVenta}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-sm"
-                  disabled={carrito.length === 0}
-                >
-                  Confirmar y Guardar Venta
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL PARA AGREGAR / EDITAR PRODUCTO */}
-      {modalProductoOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-black text-gray-900">
-                {editandoId ? "Editar Producto" : "Nuevo Producto en Inventario"}
-              </h3>
-              <button 
-                onClick={() => setModalProductoOpen(false)}
-                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={guardarProducto} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Código</label>
-                <input 
-                  type="text" 
-                  value={formCodigo}
-                  onChange={(e) => setFormCodigo(e.target.value)}
-                  placeholder="Ej: MP-003"
-                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nombre del Producto</label>
-                <input 
-                  type="text" 
-                  value={formNombre}
-                  onChange={(e) => setFormNombre(e.target.value)}
-                  placeholder="Ej: Pastillas de freno trasera"
-                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Cantidad</label>
-                  <input 
-                    type="number" 
-                    value={formCantidad}
-                    onChange={(e) => setFormCantidad(e.target.value)}
-                    placeholder="10"
-                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Precio Compra ($)</label>
-                  <input 
-                    type="number" 
-                    step="0.01"
-                    value={formPCompra}
-                    onChange={(e) => setFormPCompra(e.target.value)}
-                    placeholder="5.00"
-                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-              </div>
-
-              {formPCompra && !isNaN(parseFloat(formPCompra)) && (
-                <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-2 mt-4">
-                  <p className="text-xs font-bold text-gray-500 uppercase">Cálculos automáticos en vivo:</p>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Precio Venta ($):</span>
-                    <span className="font-bold text-emerald-600">${calcularPrecios(parseFloat(formPCompra)).pVenta.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Precio Final (BS):</span>
-                    <span className="font-black text-gray-900">{calcularPrecios(parseFloat(formPCompra)).pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</span>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-end gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setModalProductoOpen(false)}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2.5 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm"
-                >
-                  {editandoId ? "Actualizar Producto" : "Guardar Producto"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+                            <p className="
