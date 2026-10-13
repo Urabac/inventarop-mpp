@@ -136,8 +136,10 @@ export function FinancialDashboard(props: any) {
   };
 
   // Guardar / Actualizar Producto en la colección exclusiva de Inventario
-  const guardarProducto = async (e: React.FormEvent) => {
+const guardarProducto = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log("Intentando guardar producto...", { formCodigo, formNombre, formCantidad, formPCompra });
+
     const pCompraNum = parseFloat(formPCompra) || 0;
     const cantidadNum = parseInt(formCantidad) || 0;
 
@@ -148,14 +150,18 @@ export function FinancialDashboard(props: any) {
       pCompra: pCompraNum
     };
 
-    if (editandoId) {
-      await updateDoc(doc(db, COLLECTION_INVENTARIO, editandoId), datosProd);
-    } else {
-      await addDoc(collection(db, COLLECTION_INVENTARIO), datosProd);
+    try {
+      if (editandoId) {
+        await updateDoc(doc(db, COLLECTION_INVENTARIO, editandoId), datosProd);
+      } else {
+        await addDoc(collection(db, COLLECTION_INVENTARIO), datosProd);
+      }
+      setModalProductoOpen(false);
+    } catch (error) {
+      console.error("Error al guardar en Firebase:", error);
+      alert("Hubo un error al guardar el producto en la base de datos. Revisa la consola.");
     }
-    setModalProductoOpen(false);
   };
-
   const eliminarProducto = async (id: string) => {
     if (confirm("¿Estás seguro de eliminar este producto?")) {
       await deleteDoc(doc(db, COLLECTION_INVENTARIO, id));
@@ -848,7 +854,7 @@ export function FinancialDashboard(props: any) {
         </div>
       )}
 
-      {modalProductoOpen && (
+     {modalProductoOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100">
             <div className="flex justify-between items-center mb-6">
@@ -856,6 +862,7 @@ export function FinancialDashboard(props: any) {
                 {editandoId ? "Editar Producto" : "Nuevo Producto en Inventario"}
               </h3>
               <button 
+                type="button"
                 onClick={() => setModalProductoOpen(false)}
                 className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition"
               >
@@ -939,7 +946,7 @@ export function FinancialDashboard(props: any) {
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2.5 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm"
+                  className="px-6 py-2.5 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm cursor-pointer"
                 >
                   {editandoId ? "Actualizar Producto" : "Guardar Producto"}
                 </button>
@@ -948,6 +955,3 @@ export function FinancialDashboard(props: any) {
           </div>
         </div>
       )}
-    </div>
-  );
-}
