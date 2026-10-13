@@ -1,57 +1,24 @@
 import React, { useState, useEffect } from "react";
 
-export function FinancialDashboard({
-  userEmail,
-  logout,
-  products,
-  clients,
-  sales,
-  loans,
-  purchases,
-  loadingData,
-  dataError,
-  openModal,
-  openSaleModal,
-  openLoanModal,
-  quickOpen,
-  setQuickOpen,
-  setSection,
-  setPrintable,
-}: {
-  userEmail: string;
-  logout: () => Promise<void>;
-  products: Product[];
-  clients: Client[];
-  sales: Sale[];
-  loans: Loan[];
-  purchases: Purchase[];
-  loadingData: boolean;
-  dataError: string;
-  openModal: (type: "venta" | "gasto" | "producto" | "cliente" | "prestamo" | "abono") => void;
-  openSaleModal: (saleId?: string) => void;
-  openLoanModal: (loanId?: string) => void;
-  quickOpen: boolean;
-  setQuickOpen: (open: boolean) => void;
-  setSection: (section: Section) => void;
-  setPrintable: (printable: Printable) => void;
-}) {
-  userEmail: string;
-  logout: () => Promise<void>;
-  products: Product[];
-  clients: Client[];
-  sales: Sale[];
-  loans: Loan[];
-  purchases: Purchase[];
-  loadingData: boolean;
-  dataError: string;
-  openModal: (type: "venta" | "gasto" | "producto" | "cliente" | "prestamo" | "abono") => void;
-  openSaleModal: (saleId?: string) => void;
-  openLoanModal: (loanId?: string) => void;
-  quickOpen: boolean;
-  setQuickOpen: (open: boolean) => void;
-  setSection: (section: Section) => void;
-  setPrintable: (printable: Printable) => void;
-}) {
+export function FinancialDashboard(props: any) {
+  const {
+    userEmail,
+    logout,
+    products,
+    clients,
+    sales,
+    loans,
+    purchases,
+    loadingData,
+    dataError,
+    openModal,
+    openSaleModal,
+    openLoanModal,
+    quickOpen,
+    setQuickOpen,
+    setSection,
+    setPrintable,
+  } = props;
   const [period, setPeriod] = useState<Period>("Hoy");
   const [showBreakdown, setShowBreakdown] = useState(false);
 
