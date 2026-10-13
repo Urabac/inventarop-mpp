@@ -9,7 +9,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { SummaryCard } from "@/components/summary-card";
 
 export function FinancialDashboard(props: any) {
   const {
