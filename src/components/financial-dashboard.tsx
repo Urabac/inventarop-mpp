@@ -34,7 +34,6 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// --- COLECCIONES AISLADAS PARA MOTO PARTES PIRUETA ---
 const COLLECTION_INVENTARIO = "motopartes_pirueta_inventario";
 const COLLECTION_VENTAS = "motopartes_pirueta_ventas";
 const COLLECTION_CONFIG = "motopartes_pirueta_configuracion";
@@ -51,44 +50,84 @@ export function FinancialDashboard(props: any) {
   const [editandoTasa, setEditandoTasa] = useState(false);
   const [tempTasa, setTempTasa] = useState(tasaBcv.toString());
 
-  const [products, setProducts] = useState<any[]>([]);
-  const [sales, setSales] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>(() => {
+    const saved = localStorage.getItem(COLLECTION_INVENTARIO);
+    return saved ? JSON.parse(saved) : [
+      { id: "1", codigo: "MP-001", nombre: "Bujía NGK Moto", cantidad: 12, pCompra: 0.80 },
+      { id: "2", codigo: "MP-002", nombre: "Kit de arrastre GN125", cantidad: 4, pCompra: 18.00 }
+    ];
+  });
+
+  const [sales, setSales] = useState<any[]>(() => {
+    const saved = localStorage.getItem(COLLECTION_VENTAS);
+    return saved ? JSON.parse(saved) : [];
+  });
+
   const [busquedaInventario, setBusquedaInventario] = useState("");
 
-  // SINCRONIZACIÓN EN TIEMPO REAL CON FIRESTORE
+  // SINCRONIZACIÓN EN TIEMPO REAL CON FIRESTORE (CON RESPALDO LOCAL)
   useEffect(() => {
-    const unsubProducts = onSnapshot(collection(db, COLLECTION_INVENTARIO), (snapshot) => {
-      const listaProd = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setProducts(listaProd);
-    });
+    try {
+      const unsubProducts = onSnapshot(collection(db, COLLECTION_INVENTARIO), (snapshot) => {
+        if (!snapshot.empty) {
+          const listaProd = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setProducts(listaProd);
+          localStorage.setItem(COLLECTION_INVENTARIO, JSON.stringify(listaProd));
+        }
+      }, (error) => {
+        console.warn("Aviso de Firebase (Inventario offline):", error.message);
+      });
 
-    const unsubSales = onSnapshot(collection(db, COLLECTION_VENTAS), (snapshot) => {
-      const listaVentas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      listaVentas.sort((a: any, b: any) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
-      setSales(listaVentas);
-    });
+      const unsubSales = onSnapshot(collection(db, COLLECTION_VENTAS), (snapshot) => {
+        if (!snapshot.empty) {
+          const listaVentas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          listaVentas.sort((a: any, b: any) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+          setSales(listaVentas);
+          localStorage.setItem(COLLECTION_VENTAS, JSON.stringify(listaVentas));
+        }
+      }, (error) => {
+        console.warn("Aviso de Firebase (Ventas offline):", error.message);
+      });
 
-    const unsubTasa = onSnapshot(doc(db, COLLECTION_CONFIG, "bcv"), (docSnap) => {
-      if (docSnap.exists()) {
-        const val = docSnap.data().valor;
-        setTasaBcv(val);
-        setTempTasa(val.toString());
-      }
-    });
+      const unsubTasa = onSnapshot(doc(db, COLLECTION_CONFIG, "bcv"), (docSnap) => {
+        if (docSnap.exists()) {
+          const val = docSnap.data().valor;
+          setTasaBcv(val);
+          setTempTasa(val.toString());
+        }
+      }, (error) => {
+        console.warn("Aviso de Firebase (Tasa offline):", error.message);
+      });
 
-    return () => {
-      unsubProducts();
-      unsubSales();
-      unsubTasa();
-    };
+      return () => {
+        unsubProducts();
+        unsubSales();
+        unsubTasa();
+      };
+    } catch (err) {
+      console.error("Error inicializando listeners de Firebase:", err);
+    }
   }, []);
+
+  // Guardar en LocalStorage ante cualquier cambio
+  useEffect(() => {
+    localStorage.setItem(COLLECTION_INVENTARIO, JSON.stringify(products));
+  }, [products]);
+
+  useEffect(() => {
+    localStorage.setItem(COLLECTION_VENTAS, JSON.stringify(sales));
+  }, [sales]);
 
   const guardarTasa = async () => {
     const val = parseFloat(tempTasa);
     if (!isNaN(val) && val > 0) {
       setTasaBcv(val);
       setEditandoTasa(false);
-      await setDoc(doc(db, COLLECTION_CONFIG, "bcv"), { valor: val });
+      try {
+        await setDoc(doc(db, COLLECTION_CONFIG, "bcv"), { valor: val });
+      } catch (e) {
+        console.error("Error guardando tasa en nube:", e);
+      }
     }
   };
 
@@ -131,6 +170,7 @@ export function FinancialDashboard(props: any) {
     setModalProductoOpen(true);
   };
 
+  // Guardar / Actualizar Producto con manejo de errores robusto (Nube + Local)
   const guardarProducto = async (e: React.FormEvent) => {
     e.preventDefault();
     const pCompraNum = parseFloat(formPCompra) || 0;
@@ -145,20 +185,37 @@ export function FinancialDashboard(props: any) {
 
     try {
       if (editandoId) {
-        await updateDoc(doc(db, COLLECTION_INVENTARIO, editandoId), datosProd);
+        try {
+          await updateDoc(doc(db, COLLECTION_INVENTARIO, editandoId), datosProd);
+        } catch (cloudErr) {
+          console.warn("Escritura en nube falló, actualizando local:", cloudErr);
+        }
+        setProducts(products.map(p => p.id === editandoId ? { ...p, ...datosProd } : p));
       } else {
-        await addDoc(collection(db, COLLECTION_INVENTARIO), datosProd);
+        let nuevoId = Date.now().toString();
+        try {
+          const docRef = await addDoc(collection(db, COLLECTION_INVENTARIO), datosProd);
+          nuevoId = docRef.id;
+        } catch (cloudErr) {
+          console.warn("Escritura en nube falló, guardando localmente:", cloudErr);
+        }
+        setProducts([...products, { id: nuevoId, ...datosProd }]);
       }
       setModalProductoOpen(false);
-    } catch (error) {
-      console.error("Error al guardar en Firebase:", error);
-      alert("Hubo un error al guardar el producto.");
+    } catch (error: any) {
+      console.error("Error crítico al guardar producto:", error);
+      alert("Error al guardar: " + (error.message || "Desconocido"));
     }
   };
 
   const eliminarProducto = async (id: string) => {
     if (confirm("¿Estás seguro de eliminar este producto?")) {
-      await deleteDoc(doc(db, COLLECTION_INVENTARIO, id));
+      try {
+        await deleteDoc(doc(db, COLLECTION_INVENTARIO, id));
+      } catch (e) {
+        console.warn("Eliminación en nube falló, eliminando local:", e);
+      }
+      setProducts(products.filter(p => p.id !== id));
     }
   };
 
@@ -227,13 +284,21 @@ export function FinancialDashboard(props: any) {
       }
     }
 
-    for (let enCarrito of carrito) {
-      const prodActual = products.find(p => p.id === enCarrito.id);
-      if (prodActual) {
-        const nuevaCant = Math.max(0, prodActual.cantidad - enCarrito.qty);
-        await updateDoc(doc(db, COLLECTION_INVENTARIO, enCarrito.id), { cantidad: nuevaCant });
+    // Descontar inventario
+    const nuevoInventario = products.map(prod => {
+      const enCarrito = carrito.find(c => c.id === prod.id);
+      if (enCarrito) {
+        const nuevaCant = Math.max(0, prod.cantidad - enCarrito.qty);
+        try {
+          updateDoc(doc(db, COLLECTION_INVENTARIO, prod.id), { cantidad: nuevaCant });
+        } catch (e) {
+          console.warn("Error actualizando stock en nube:", e);
+        }
+        return { ...prod, cantidad: nuevaCant };
       }
-    }
+      return prod;
+    });
+    setProducts(nuevoInventario);
 
     const nuevaVenta = {
       fecha: new Date().toISOString(),
@@ -244,8 +309,13 @@ export function FinancialDashboard(props: any) {
       referencia: (metodoPago === "Pago movil" || metodoPago === "Transferencia") ? referenciaPago : ""
     };
 
-    await addDoc(collection(db, COLLECTION_VENTAS), nuevaVenta);
+    try {
+      await addDoc(collection(db, COLLECTION_VENTAS), nuevaVenta);
+    } catch (e) {
+      console.warn("Venta guardada localmente (nube falló):", e);
+    }
 
+    setSales([{ id: Date.now().toString(), ...nuevaVenta }, ...sales]);
     setCarrito([]);
     setMetodoPago("Efectivo");
     setReferenciaPago("");
@@ -424,7 +494,7 @@ export function FinancialDashboard(props: any) {
                 {currentSection === "inventario" && "Módulo de Inventario"}
               </h2>
               <p className="text-emerald-100 text-sm mt-1">
-                Control exclusivo y seguro en la nube.
+                Control seguro con respaldo dual.
               </p>
             </div>
 
@@ -543,410 +613,4 @@ export function FinancialDashboard(props: any) {
                   <h3 className="text-lg font-bold text-gray-900">Historial y Registro de Ventas</h3>
                   <p className="text-xs text-gray-500 mt-0.5">Filtra las ventas y genera reportes imprimibles.</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-                  <div className="flex bg-gray-100 p-1 rounded-xl">
-                    <button 
-                      onClick={() => setFiltroVentas("dia")}
-                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition", filtroVentas === "dia" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
-                    >
-                      Día
-                    </button>
-                    <button 
-                      onClick={() => setFiltroVentas("semana")}
-                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition", filtroVentas === "semana" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
-                    >
-                      Semana
-                    </button>
-                    <button 
-                      onClick={() => setFiltroVentas("mes")}
-                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition", filtroVentas === "mes" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
-                    >
-                      Mes
-                    </button>
-                  </div>
-                  <Button onClick={generarReportePDF} variant="outline" className="border-gray-300 text-gray-700 font-bold flex items-center gap-2">
-                    <Printer className="w-4 h-4" /> Generar Reporte
-                  </Button>
-                  <Button onClick={() => setModalVentaOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-2">
-                    <Plus className="w-4 h-4" /> Nueva Venta
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                {ventasFiltradas && ventasFiltradas.length > 0 ? (
-                  ventasFiltradas.map((sale: any) => (
-                    <div key={sale.id} className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
-                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-4 gap-2">
-                        <div>
-                          <span className="text-xs font-bold px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-lg">
-                            Pago: {sale.metodoPago} {sale.referencia ? `(Ref: ${sale.referencia})` : ""}
-                          </span>
-                          <p className="text-xs text-gray-400 mt-2">{new Date(sale.fecha).toLocaleString()}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-lg font-black text-emerald-600">${sale.totalDolares.toFixed(2)}</p>
-                          <p className="text-xs font-bold text-gray-500">{sale.totalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</p>
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <p className="text-xs font-bold text-gray-500 uppercase">Productos vendidos:</p>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {sale.items.map((item: any, idx: number) => (
-                            <div key={idx} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-xl text-xs">
-                              <span className="font-bold text-gray-800">{item.qty}x {item.nombre}</span>
-                              <span className="text-gray-600">${(item.pVenta * item.qty).toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center text-gray-500">
-                    No hay ventas registradas para este filtro de tiempo.
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {currentSection === "inventario" && (
-            <div className="space-y-6">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white rounded-2xl border border-gray-200 p-6 shadow-sm gap-4">
-                <div>
-                  <h3 className="text-lg font-bold text-gray-900">Inventario y Precios Automáticos</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Los precios de venta y bolívares se calculan con base en la Tasa BCV ({tasaBcv} BS).</p>
-                </div>
-                <Button onClick={abrirModalNuevo} className="bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-2">
-                  <Plus className="w-4 h-4" /> Agregar Producto
-                </Button>
-              </div>
-
-              <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
-                <div className="relative">
-                  <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
-                  <input 
-                    type="text" 
-                    value={busquedaInventario}
-                    onChange={(e) => setBusquedaInventario(e.target.value)}
-                    placeholder="Buscar repuesto por nombre o código en el inventario..."
-                    className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50/50"
-                  />
-                </div>
-              </div>
-
-              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-gray-50 border-b border-gray-200 text-xs font-black text-gray-600 uppercase tracking-wider">
-                        <th className="py-4 px-6">Código</th>
-                        <th className="py-4 px-6">Nombre</th>
-                        <th className="py-4 px-6 text-center">Cantidad</th>
-                        <th className="py-4 px-6 text-right">P. Compra ($)</th>
-                        <th className="py-4 px-6 text-right">P. Venta ($)</th>
-                        <th className="py-4 px-6 text-right">P. Final (BS)</th>
-                        <th className="py-4 px-6 text-center">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 text-sm">
-                      {productosFiltradosInventario && productosFiltradosInventario.length > 0 ? (
-                        productosFiltradosInventario.map((prod: any) => {
-                          const calc = calcularPrecios(prod.pCompra);
-                          return (
-                            <tr key={prod.id} className="hover:bg-gray-50/80 transition">
-                              <td className="py-4 px-6 font-mono font-bold text-gray-700">{prod.codigo}</td>
-                              <td className="py-4 px-6 font-bold text-gray-900">{prod.nombre}</td>
-                              <td className="py-4 px-6 text-center">
-                                <span className={cn("px-2.5 py-1 rounded-lg text-xs font-bold", prod.cantidad > 0 ? "bg-blue-50 text-blue-700" : "bg-red-50 text-red-700")}>
-                                  {prod.cantidad} un.
-                                </span>
-                              </td>
-                              <td className="py-4 px-6 text-right font-medium text-gray-600">${prod.pCompra.toFixed(2)}</td>
-                              <td className="py-4 px-6 text-right font-bold text-emerald-600">${calc.pVenta.toFixed(2)}</td>
-                              <td className="py-4 px-6 text-right font-black text-gray-900">{calc.pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</td>
-                              <td className="py-4 px-6 text-center flex items-center justify-center gap-2">
-                                <button 
-                                  onClick={() => abrirModalEditar(prod)} 
-                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition"
-                                  title="Editar"
-                                >
-                                  <Edit className="w-4 h-4" />
-                                </button>
-                                <button 
-                                  onClick={() => eliminarProducto(prod.id)} 
-                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition"
-                                  title="Eliminar"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      ) : (
-                        <tr>
-                          <td colSpan={7} className="text-center py-12 text-gray-500">
-                            No se encontraron productos con ese criterio de búsqueda.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </main>
-
-      {modalVentaOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-black text-gray-900">Registrar Nueva Venta</h3>
-              <button 
-                onClick={() => setModalVentaOpen(false)}
-                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-6">
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Buscar producto en inventario</label>
-                <div className="relative">
-                  <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
-                  <input 
-                    type="text" 
-                    value={busquedaProducto}
-                    onChange={(e) => setBusquedaProducto(e.target.value)}
-                    placeholder="Escribe el nombre o código del repuesto..."
-                    className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-
-                {busquedaProducto.trim() !== "" && (
-                  <div className="mt-2 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto divide-y divide-gray-100">
-                    {products.filter(p => p.nombre.toLowerCase().includes(busquedaProducto.toLowerCase()) || p.codigo.toLowerCase().includes(busquedaProducto.toLowerCase())).map(prod => {
-                      const calc = calcularPrecios(prod.pCompra);
-                      return (
-                        <div key={prod.id} className="p-3 flex justify-between items-center hover:bg-gray-50">
-                          <div>
-                            <p className="font-bold text-gray-900 text-sm">{prod.nombre}</p>
-                            <p className="text-xs text-gray-500">Stock: {prod.cantidad} | Venta: ${calc.pVenta} ({calc.pFinalBs} BS)</p>
-                          </div>
-                          <Button 
-                            onClick={() => { agregarAlCarrito(prod); setBusquedaProducto(""); }}
-                            size="sm"
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
-                            disabled={prod.cantidad <= 0}
-                          >
-                            {prod.cantidad > 0 ? "Agregar" : "Agotado"}
-                          </Button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <p className="text-xs font-bold text-gray-500 uppercase">Productos en la venta:</p>
-                {carrito.length > 0 ? (
-                  <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                    {carrito.map(item => (
-                      <div key={item.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border border-gray-100">
-                        <div>
-                          <p className="font-bold text-gray-900 text-sm">{item.nombre}</p>
-                          <p className="text-xs text-gray-500">${item.pVenta} c/u ({item.pFinalBs} BS)</p>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center gap-2 bg-white border border-gray-200 px-2 py-1 rounded-lg">
-                            <button onClick={() => cambiarCantidadCarrito(item.id, -1)} className="text-gray-500 font-bold px-1">-</button>
-                            <span className="text-xs font-bold w-4 text-center">{item.qty}</span>
-                            <button onClick={() => cambiarCantidadCarrito(item.id, 1)} className="text-gray-500 font-bold px-1">+</button>
-                          </div>
-                          <span className="font-bold text-emerald-600 text-sm w-16 text-right">${(item.pVenta * item.qty).toFixed(2)}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-400 py-4 text-center border border-dashed border-gray-200 rounded-xl">Ningún producto seleccionado todavía.</p>
-                )}
-              </div>
-
-              <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm font-bold text-gray-600">Total Venta ($):</span>
-                  <span className="text-xl font-black text-emerald-700">${totalVentaDolares.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between items-center border-t border-emerald-100/60 pt-2">
-                  <span className="text-sm font-bold text-gray-600">Total Venta (BS):</span>
-                  <span className="text-xl font-black text-gray-900">{totalVentaBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</span>
-                </div>
-
-                <div className="space-y-2 pt-2 border-t border-emerald-100/60">
-                  <label className="block text-xs font-bold text-gray-600 uppercase">Método de Pago</label>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {["Efectivo", "Divisas", "Pago movil", "Transferencia"].map(metodo => (
-                      <button
-                        key={metodo}
-                        type="button"
-                        onClick={() => setMetodoPago(metodo)}
-                        className={cn(
-                          "py-2 px-3 text-xs font-bold rounded-xl border transition text-center",
-                          metodoPago === metodo ? "bg-emerald-600 text-white border-emerald-600 shadow-sm" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
-                        )}
-                      >
-                        {metodo}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {(metodoPago === "Pago movil" || metodoPago === "Transferencia") && (
-                  <div>
-                    <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Referencia (Últimos 4 dígitos)</label>
-                    <input 
-                      type="text" 
-                      maxLength={4}
-                      value={referenciaPago}
-                      onChange={(e) => setReferenciaPago(e.target.value.replace(/\D/g, ""))}
-                      placeholder="Ej: 4829"
-                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      required
-                    />
-                  </div>
-                )}
-              </div>
-
-              <div className="flex justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setModalVentaOpen(false)}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition"
-                >
-                  Cancelar
-                </button>
-                <Button
-                  onClick={confirmarVenta}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-sm"
-                  disabled={carrito.length === 0}
-                >
-                  Confirmar y Guardar Venta
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {modalProductoOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-black text-gray-900">
-                {editandoId ? "Editar Producto" : "Nuevo Producto en Inventario"}
-              </h3>
-              <button 
-                type="button"
-                onClick={() => setModalProductoOpen(false)}
-                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={guardarProducto} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Código</label>
-                <input 
-                  type="text" 
-                  value={formCodigo}
-                  onChange={(e) => setFormCodigo(e.target.value)}
-                  placeholder="Ej: MP-003"
-                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nombre del Producto</label>
-                <input 
-                  type="text" 
-                  value={formNombre}
-                  onChange={(e) => setFormNombre(e.target.value)}
-                  placeholder="Ej: Pastillas de freno trasera"
-                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Cantidad</label>
-                  <input 
-                    type="number" 
-                    value={formCantidad}
-                    onChange={(e) => setFormCantidad(e.target.value)}
-                    placeholder="10"
-                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Precio Compra ($)</label>
-                  <input 
-                    type="number" 
-                    step="0.01"
-                    value={formPCompra}
-                    onChange={(e) => setFormPCompra(e.target.value)}
-                    placeholder="5.00"
-                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-              </div>
-
-              {formPCompra && !isNaN(parseFloat(formPCompra)) && (
-                <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-2 mt-4">
-                  <p className="text-xs font-bold text-gray-500 uppercase">Cálculos automáticos en vivo:</p>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Precio Venta ($):</span>
-                    <span className="font-bold text-emerald-600">${calcularPrecios(parseFloat(formPCompra)).pVenta.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Precio Final (BS):</span>
-                    <span className="font-black text-gray-900">{calcularPrecios(parseFloat(formPCompra)).pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</span>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-end gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setModalProductoOpen(false)}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2.5 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm cursor-pointer"
-                >
-                  {editandoId ? "Actualizar Producto" : "Guardar Producto"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+                <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto
