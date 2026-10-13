@@ -99,6 +99,3 @@ export function FinancialDashboard(props: any) {
     </div>
   );
 }
-export function FinancialDashboard(props: any) {
-  return <Dashboard {...props} />;
-}
