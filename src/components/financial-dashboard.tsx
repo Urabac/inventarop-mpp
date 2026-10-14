@@ -12,7 +12,8 @@ import {
   X,
   DollarSign,
   Search,
-  Printer
+  Printer,
+  AlertTriangle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -54,7 +55,7 @@ export function FinancialDashboard(props: any) {
     const saved = localStorage.getItem(COLLECTION_INVENTARIO);
     return saved ? JSON.parse(saved) : [
       { id: "1", codigo: "MP-001", nombre: "Bujía NGK Moto", cantidad: 12, pCompra: 0.80 },
-      { id: "2", codigo: "MP-002", nombre: "Kit de arrastre GN125", cantidad: 4, pCompra: 18.00 }
+      { id: "2", codigo: "MP-002", nombre: "Kit de arrastre GN125", cantidad: 3, pCompra: 18.00 }
     ];
   });
 
@@ -64,8 +65,8 @@ export function FinancialDashboard(props: any) {
   });
 
   const [busquedaInventario, setBusquedaInventario] = useState("");
+  const [modalStockBajoOpen, setModalStockBajoOpen] = useState(false);
 
-  // SINCRONIZACIÓN EN TIEMPO REAL CON FIRESTORE (CON RESPALDO LOCAL)
   useEffect(() => {
     try {
       const unsubProducts = onSnapshot(collection(db, COLLECTION_INVENTARIO), (snapshot) => {
@@ -75,7 +76,7 @@ export function FinancialDashboard(props: any) {
           localStorage.setItem(COLLECTION_INVENTARIO, JSON.stringify(listaProd));
         }
       }, (error) => {
-        console.warn("Aviso de Firebase (Inventario offline):", error.message);
+        console.warn("Firebase offline:", error.message);
       });
 
       const unsubSales = onSnapshot(collection(db, COLLECTION_VENTAS), (snapshot) => {
@@ -86,7 +87,7 @@ export function FinancialDashboard(props: any) {
           localStorage.setItem(COLLECTION_VENTAS, JSON.stringify(listaVentas));
         }
       }, (error) => {
-        console.warn("Aviso de Firebase (Ventas offline):", error.message);
+        console.warn("Firebase offline:", error.message);
       });
 
       const unsubTasa = onSnapshot(doc(db, COLLECTION_CONFIG, "bcv"), (docSnap) => {
@@ -96,7 +97,7 @@ export function FinancialDashboard(props: any) {
           setTempTasa(val.toString());
         }
       }, (error) => {
-        console.warn("Aviso de Firebase (Tasa offline):", error.message);
+        console.warn("Firebase offline:", error.message);
       });
 
       return () => {
@@ -105,11 +106,10 @@ export function FinancialDashboard(props: any) {
         unsubTasa();
       };
     } catch (err) {
-      console.error("Error inicializando listeners de Firebase:", err);
+      console.error("Error inicializando Firebase:", err);
     }
   }, []);
 
-  // Guardar en LocalStorage ante cualquier cambio
   useEffect(() => {
     localStorage.setItem(COLLECTION_INVENTARIO, JSON.stringify(products));
   }, [products]);
@@ -126,7 +126,7 @@ export function FinancialDashboard(props: any) {
       try {
         await setDoc(doc(db, COLLECTION_CONFIG, "bcv"), { valor: val });
       } catch (e) {
-        console.error("Error guardando tasa en nube:", e);
+        console.error("Error guardando tasa:", e);
       }
     }
   };
@@ -170,7 +170,6 @@ export function FinancialDashboard(props: any) {
     setModalProductoOpen(true);
   };
 
-  // Guardar / Actualizar Producto con manejo de errores robusto (Nube + Local)
   const guardarProducto = async (e: React.FormEvent) => {
     e.preventDefault();
     const pCompraNum = parseFloat(formPCompra) || 0;
@@ -188,7 +187,7 @@ export function FinancialDashboard(props: any) {
         try {
           await updateDoc(doc(db, COLLECTION_INVENTARIO, editandoId), datosProd);
         } catch (cloudErr) {
-          console.warn("Escritura en nube falló, actualizando local:", cloudErr);
+          console.warn("Nube ocupada, actualizando local:", cloudErr);
         }
         setProducts(products.map(p => p.id === editandoId ? { ...p, ...datosProd } : p));
       } else {
@@ -197,14 +196,13 @@ export function FinancialDashboard(props: any) {
           const docRef = await addDoc(collection(db, COLLECTION_INVENTARIO), datosProd);
           nuevoId = docRef.id;
         } catch (cloudErr) {
-          console.warn("Escritura en nube falló, guardando localmente:", cloudErr);
+          console.warn("Nube ocupada, guardando local:", cloudErr);
         }
         setProducts([...products, { id: nuevoId, ...datosProd }]);
       }
       setModalProductoOpen(false);
     } catch (error: any) {
-      console.error("Error crítico al guardar producto:", error);
-      alert("Error al guardar: " + (error.message || "Desconocido"));
+      console.error("Error al guardar:", error);
     }
   };
 
@@ -213,7 +211,7 @@ export function FinancialDashboard(props: any) {
       try {
         await deleteDoc(doc(db, COLLECTION_INVENTARIO, id));
       } catch (e) {
-        console.warn("Eliminación en nube falló, eliminando local:", e);
+        console.warn("Nube ocupada:", e);
       }
       setProducts(products.filter(p => p.id !== id));
     }
@@ -284,7 +282,6 @@ export function FinancialDashboard(props: any) {
       }
     }
 
-    // Descontar inventario
     const nuevoInventario = products.map(prod => {
       const enCarrito = carrito.find(c => c.id === prod.id);
       if (enCarrito) {
@@ -292,7 +289,7 @@ export function FinancialDashboard(props: any) {
         try {
           updateDoc(doc(db, COLLECTION_INVENTARIO, prod.id), { cantidad: nuevaCant });
         } catch (e) {
-          console.warn("Error actualizando stock en nube:", e);
+          console.warn("Stock nube error:", e);
         }
         return { ...prod, cantidad: nuevaCant };
       }
@@ -312,7 +309,7 @@ export function FinancialDashboard(props: any) {
     try {
       await addDoc(collection(db, COLLECTION_VENTAS), nuevaVenta);
     } catch (e) {
-      console.warn("Venta guardada localmente (nube falló):", e);
+      console.warn("Venta nube error:", e);
     }
 
     setSales([{ id: Date.now().toString(), ...nuevaVenta }, ...sales]);
@@ -341,6 +338,10 @@ export function FinancialDashboard(props: any) {
     p.nombre.toLowerCase().includes(busquedaInventario.toLowerCase()) || 
     p.codigo.toLowerCase().includes(busquedaInventario.toLowerCase())
   );
+
+  // Cálculos para el resumen general
+  const totalProductosRegistrados = products.length;
+  const productosStockBajo = products.filter(p => Number(p.cantidad) <= 5);
 
   const generarReportePDF = () => {
     const ventasDelDia = sales.filter((sale: any) => {
@@ -420,8 +421,6 @@ export function FinancialDashboard(props: any) {
     `);
     ventanaReporte.document.close();
   };
-
-  const totalStock = products.reduce((acc, item) => acc + (Number(item.cantidad) || 0), 0);
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -575,20 +574,36 @@ export function FinancialDashboard(props: any) {
 
               <div>
                 <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4">Resumen general</h3>
-                <section className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <section className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                  {/* Card 1: Cantidad de productos en inventario */}
                   <div 
                     onClick={() => setCurrentSection("inventario")}
                     className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm cursor-pointer hover:border-emerald-500 transition flex items-center justify-between"
                   >
                     <div>
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Unidades en stock</p>
-                      <p className="text-3xl font-black text-gray-900 mt-2">{totalStock}</p>
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Productos en inventario</p>
+                      <p className="text-3xl font-black text-gray-900 mt-2">{totalProductosRegistrados}</p>
                     </div>
                     <div className="p-4 bg-blue-50 text-blue-600 rounded-2xl">
                       <Package className="w-7 h-7" />
                     </div>
                   </div>
 
+                  {/* Card 2: Stock bajo (<= 5) */}
+                  <div 
+                    onClick={() => setModalStockBajoOpen(true)}
+                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm cursor-pointer hover:border-amber-500 transition flex items-center justify-between"
+                  >
+                    <div>
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Stock bajo (≤ 5)</p>
+                      <p className="text-3xl font-black text-amber-600 mt-2">{productosStockBajo.length}</p>
+                    </div>
+                    <div className="p-4 bg-amber-50 text-amber-600 rounded-2xl">
+                      <AlertTriangle className="w-7 h-7" />
+                    </div>
+                  </div>
+
+                  {/* Card 3: Ventas registradas */}
                   <div 
                     onClick={() => setCurrentSection("ventas")}
                     className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm cursor-pointer hover:border-emerald-500 transition flex items-center justify-between"
@@ -771,6 +786,60 @@ export function FinancialDashboard(props: any) {
           )}
         </div>
       </main>
+
+      {/* Modal de Stock Bajo */}
+      {modalStockBajoOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl">
+                  <AlertTriangle className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-gray-900">Productos con Stock Bajo</h3>
+                  <p className="text-xs text-gray-500">Unidades disponibles menores o iguales a 5</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setModalStockBajoOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {productosStockBajo.length > 0 ? (
+                productosStockBajo.map((prod: any) => (
+                  <div key={prod.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl border border-gray-200">
+                    <div>
+                      <p className="font-mono text-xs font-bold text-gray-500">{prod.codigo}</p>
+                      <p className="font-bold text-gray-900 text-sm mt-0.5">{prod.nombre}</p>
+                    </div>
+                    <span className="px-3 py-1.5 bg-amber-100 text-amber-800 rounded-xl text-xs font-black">
+                      {prod.cantidad} un.
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="py-12 text-center text-gray-500 border border-dashed border-gray-200 rounded-2xl">
+                  ¡Excelente! No hay productos con stock bajo en este momento.
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <Button 
+                onClick={() => setModalStockBajoOpen(false)}
+                className="bg-gray-900 hover:bg-gray-800 text-white font-bold px-6 py-2.5 rounded-xl"
+              >
+                Cerrar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {modalVentaOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
