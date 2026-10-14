@@ -199,10 +199,13 @@ export function FinancialDashboard(props: any) {
     }
   };
 
+  // --- NUEVA FÓRMULA DE CÁLCULO DE PRECIOS ---
   const calcularPrecios = (pCompra: number) => {
     let pVenta = 0;
     if (pCompra <= 1) {
       pVenta = 1.5;
+    } else if (pCompra <= 2) {
+      pVenta = pCompra * 2;
     } else {
       pVenta = pCompra * 1.7;
     }
