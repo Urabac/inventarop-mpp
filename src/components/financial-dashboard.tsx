@@ -69,7 +69,6 @@ export function FinancialDashboard(props: any) {
   const [busquedaInventario, setBusquedaInventario] = useState("");
   const [modalStockBajoOpen, setModalStockBajoOpen] = useState(false);
 
-  // Función para obtener la Tasa BCV Exacta directamente del portal del BCV
   const obtenerTasaBcvOficial = async () => {
     setCargandoBcv(true);
     try {
@@ -400,6 +399,24 @@ export function FinancialDashboard(props: any) {
       return;
     }
 
+    // Cálculo de montos por método de pago
+    let efectivoDolar = 0;
+    let pagoMovilBs = 0;
+    let divisaDolar = 0;
+    let transferenciaBs = 0;
+
+    ventasDelDia.forEach(s => {
+      if (s.metodoPago === "Efectivo") {
+        efectivoDolar += s.totalDolares;
+      } else if (s.metodoPago === "Pago movil") {
+        pagoMovilBs += s.totalBs;
+      } else if (s.metodoPago === "Divisas") {
+        divisaDolar += s.totalDolares;
+      } else if (s.metodoPago === "Transferencia") {
+        transferenciaBs += s.totalBs;
+      }
+    });
+
     const totalDolarDia = ventasDelDia.reduce((acc, s) => acc + s.totalDolares, 0);
     const totalBsDia = ventasDelDia.reduce((acc, s) => acc + s.totalBs, 0);
 
@@ -419,7 +436,11 @@ export function FinancialDashboard(props: any) {
             th, td { border: 1px solid #cbd5e1; padding: 10px; text-align: left; }
             th { background-color: #f1f5f9; color: #1e293b; font-weight: bold; }
             td.num, th.num { text-align: right; }
-            .totales { margin-top: 20px; text-align: right; font-size: 15px; font-weight: bold; }
+            .totales-box { margin-top: 25px; border: 2px solid #047857; padding: 15px; border-radius: 8px; background-color: #f0fdf4; }
+            .totales-box h3 { margin: 0 0 10px 0; color: #047857; font-size: 16px; border-bottom: 1px solid #bbf7d0; padding-bottom: 5px; }
+            .totales-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 14px; }
+            .totales-grid div { display: flex; justify-content: space-between; padding: 4px 8px; background: white; border-radius: 4px; border: 1px solid #e2e8f0; }
+            .total-final { margin-top: 15px; font-size: 16px; font-weight: bold; text-align: right; color: #0f172a; }
             .print-btn { margin-top: 30px; text-align: center; }
             .print-btn button { background: #047857; color: white; border: none; padding: 10px 20px; font-size: 14px; border-radius: 6px; cursor: pointer; }
             @media print { .print-btn { display: none; } }
@@ -456,10 +477,21 @@ export function FinancialDashboard(props: any) {
               `).join("")}
             </tbody>
           </table>
-          <div class="totales">
-            <p>Total del Día ($): $${totalDolarDia.toFixed(2)}</p>
-            <p>Total del Día (BS): ${totalBsDia.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</p>
+
+          <div class="totales-box">
+            <h3>Desglose de Cierre por Método de Pago</h3>
+            <div class="totales-grid">
+              <div><span>Efectivo ($):</span> <strong>$${efectivoDolar.toFixed(2)}</strong></div>
+              <div><span>Divisa ($):</span> <strong>$${divisaDolar.toFixed(2)}</strong></div>
+              <div><span>Pago Móvil (BS):</span> <strong>${pagoMovilBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</strong></div>
+              <div><span>Transferencia (BS):</span> <strong>${transferenciaBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</strong></div>
+            </div>
+            <div class="total-final">
+              <p>Total del Día ($): $${totalDolarDia.toFixed(2)}</p>
+              <p>Total del Día (BS): ${totalBsDia.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</p>
+            </div>
           </div>
+
           <div class="print-btn">
             <button onclick="window.print()">Imprimir / Guardar como PDF</button>
           </div>
