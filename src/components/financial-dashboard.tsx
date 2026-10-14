@@ -53,18 +53,8 @@ export function FinancialDashboard(props: any) {
   const [tempTasa, setTempTasa] = useState(tasaBcv.toString());
   const [cargandoBcv, setCargandoBcv] = useState(false);
 
-  const [products, setProducts] = useState<any[]>(() => {
-    const saved = localStorage.getItem(COLLECTION_INVENTARIO);
-    return saved ? JSON.parse(saved) : [
-      { id: "1", codigo: "MP-001", nombre: "Bujía NGK Moto", cantidad: 12, pCompra: 0.80 },
-      { id: "2", codigo: "MP-002", nombre: "Kit de arrastre GN125", cantidad: 3, pCompra: 18.00 }
-    ];
-  });
-
-  const [sales, setSales] = useState<any[]>(() => {
-    const saved = localStorage.getItem(COLLECTION_VENTAS);
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [products, setProducts] = useState<any[]>([]);
+  const [sales, setSales] = useState<any[]>([]);
 
   const [busquedaInventario, setBusquedaInventario] = useState("");
   const [modalStockBajoOpen, setModalStockBajoOpen] = useState(false);
@@ -111,55 +101,37 @@ export function FinancialDashboard(props: any) {
   useEffect(() => {
     obtenerTasaBcvOficial();
 
-    try {
-      const unsubProducts = onSnapshot(collection(db, COLLECTION_INVENTARIO), (snapshot) => {
-        if (!snapshot.empty) {
-          const listaProd = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setProducts(listaProd);
-          localStorage.setItem(COLLECTION_INVENTARIO, JSON.stringify(listaProd));
-        }
-      }, (error) => {
-        console.warn("Firebase offline:", error.message);
-      });
+    const unsubProducts = onSnapshot(collection(db, COLLECTION_INVENTARIO), (snapshot) => {
+      const listaProd = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setProducts(listaProd);
+    }, (error) => {
+      console.error("Error leyendo inventario de Firebase:", error);
+    });
 
-      const unsubSales = onSnapshot(collection(db, COLLECTION_VENTAS), (snapshot) => {
-        if (!snapshot.empty) {
-          const listaVentas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          listaVentas.sort((a: any, b: any) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
-          setSales(listaVentas);
-          localStorage.setItem(COLLECTION_VENTAS, JSON.stringify(listaVentas));
-        }
-      }, (error) => {
-        console.warn("Firebase offline:", error.message);
-      });
+    const unsubSales = onSnapshot(collection(db, COLLECTION_VENTAS), (snapshot) => {
+      const listaVentas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      listaVentas.sort((a: any, b: any) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+      setSales(listaVentas);
+    }, (error) => {
+      console.error("Error leyendo ventas de Firebase:", error);
+    });
 
-      const unsubTasa = onSnapshot(doc(db, COLLECTION_CONFIG, "bcv"), (docSnap) => {
-        if (docSnap.exists()) {
-          const val = docSnap.data().valor;
-          setTasaBcv(val);
-          setTempTasa(val.toString());
-        }
-      }, (error) => {
-        console.warn("Firebase offline:", error.message);
-      });
+    const unsubTasa = onSnapshot(doc(db, COLLECTION_CONFIG, "bcv"), (docSnap) => {
+      if (docSnap.exists()) {
+        const val = docSnap.data().valor;
+        setTasaBcv(val);
+        setTempTasa(val.toString());
+      }
+    }, (error) => {
+      console.error("Error leyendo tasa de Firebase:", error);
+    });
 
-      return () => {
-        unsubProducts();
-        unsubSales();
-        unsubTasa();
-      };
-    } catch (err) {
-      console.error("Error inicializando Firebase:", err);
-    }
+    return () => {
+      unsubProducts();
+      unsubSales();
+      unsubTasa();
+    };
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem(COLLECTION_INVENTARIO, JSON.stringify(products));
-  }, [products]);
-
-  useEffect(() => {
-    localStorage.setItem(COLLECTION_VENTAS, JSON.stringify(sales));
-  }, [sales]);
 
   const guardarTasa = async () => {
     const val = parseFloat(tempTasa);
@@ -169,7 +141,7 @@ export function FinancialDashboard(props: any) {
       try {
         await setDoc(doc(db, COLLECTION_CONFIG, "bcv"), { valor: val });
       } catch (e) {
-        console.error("Error guardando tasa:", e);
+        console.error("Error guardando tasa en Firestore:", e);
       }
     }
   };
@@ -227,36 +199,37 @@ export function FinancialDashboard(props: any) {
 
     try {
       if (editandoId) {
-        try {
-          await updateDoc(doc(db, COLLECTION_INVENTARIO, editandoId), datosProd);
-        } catch (cloudErr) {
-          console.warn("Nube ocupada, actualizando local:", cloudErr);
-        }
-        setProducts(products.map(p => p.id === editandoId ? { ...p, ...datosProd } : p));
+        await updateDoc(doc(db, COLLECTION_INVENTARIO, editandoId), datosProd);
       } else {
-        let nuevoId = Date.now().toString();
-        try {
-          const docRef = await addDoc(collection(db, COLLECTION_INVENTARIO), datosProd);
-          nuevoId = docRef.id;
-        } catch (cloudErr) {
-          console.warn("Nube ocupada, guardando local:", cloudErr);
-        }
-        setProducts([...products, { id: nuevoId, ...datosProd }]);
+        await addDoc(collection(db, COLLECTION_INVENTARIO), datosProd);
       }
       setModalProductoOpen(false);
     } catch (error: any) {
-      console.error("Error al guardar:", error);
+      console.error("Error al guardar en Firebase:", error);
+      alert("Hubo un error al guardar en la base de datos: " + error.message);
     }
   };
 
   const eliminarProducto = async (id: string) => {
-    if (confirm("¿Estás seguro de eliminar este producto?")) {
+    if (confirm("¿Estás seguro de eliminar este producto de la base de datos?")) {
       try {
         await deleteDoc(doc(db, COLLECTION_INVENTARIO, id));
-      } catch (e) {
-        console.warn("Nube ocupada:", e);
+      } catch (e: any) {
+        console.error("Error eliminando:", e);
+        alert("No se pudo eliminar: " + e.message);
       }
-      setProducts(products.filter(p => p.id !== id));
+    }
+  };
+
+  // Función para eliminar una venta del historial de Firebase
+  const eliminarVenta = async (id: string) => {
+    if (confirm("¿Estás seguro de eliminar esta venta del historial?")) {
+      try {
+        await deleteDoc(doc(db, COLLECTION_VENTAS, id));
+      } catch (e: any) {
+        console.error("Error eliminando venta:", e);
+        alert("No se pudo eliminar la venta: " + e.message);
+      }
     }
   };
 
@@ -325,41 +298,35 @@ export function FinancialDashboard(props: any) {
       }
     }
 
-    const nuevoInventario = products.map(prod => {
-      const enCarrito = carrito.find(c => c.id === prod.id);
-      if (enCarrito) {
-        const nuevaCant = Math.max(0, prod.cantidad - enCarrito.qty);
-        try {
-          updateDoc(doc(db, COLLECTION_INVENTARIO, prod.id), { cantidad: nuevaCant });
-        } catch (e) {
-          console.warn("Stock nube error:", e);
-        }
-        return { ...prod, cantidad: nuevaCant };
-      }
-      return prod;
-    });
-    setProducts(nuevoInventario);
-
-    const nuevaVenta = {
-      fecha: new Date().toISOString(),
-      items: [...carrito],
-      totalDolares: totalVentaDolares,
-      totalBs: totalVentaBs,
-      metodoPago,
-      referencia: (metodoPago === "Pago movil" || metodoPago === "Transferencia") ? referenciaPago : ""
-    };
-
     try {
-      await addDoc(collection(db, COLLECTION_VENTAS), nuevaVenta);
-    } catch (e) {
-      console.warn("Venta nube error:", e);
-    }
+      for (let item of carrito) {
+        const prodActual = products.find(p => p.id === item.id);
+        if (prodActual) {
+          const nuevaCant = Math.max(0, prodActual.cantidad - item.qty);
+          await updateDoc(doc(db, COLLECTION_INVENTARIO, item.id), { cantidad: nuevaCant });
+        }
+      }
 
-    setSales([{ id: Date.now().toString(), ...nuevaVenta }, ...sales]);
-    setCarrito([]);
-    setMetodoPago("Efectivo");
-    setReferenciaPago("");
-    setModalVentaOpen(false);
+      const nuevaVenta = {
+        fecha: new Date().toISOString(),
+        items: [...carrito],
+        totalDolares: totalVentaDolares,
+        totalBs: totalVentaBs,
+        metodoPago,
+        referencia: (metodoPago === "Pago movil" || metodoPago === "Transferencia") ? referenciaPago : ""
+      };
+
+      await addDoc(collection(db, COLLECTION_VENTAS), nuevaVenta);
+
+      setCarrito([]);
+      setMetodoPago("Efectivo");
+      setReferenciaPago("");
+      setModalVentaOpen(false);
+      alert("¡Venta registrada y descontada del inventario en la base de datos con éxito!");
+    } catch (e: any) {
+      console.error("Error al procesar la venta en Firebase:", e);
+      alert("Error al registrar la venta en la base de datos: " + e.message);
+    }
   };
 
   const ventasFiltradas = sales.filter((sale: any) => {
@@ -399,7 +366,6 @@ export function FinancialDashboard(props: any) {
       return;
     }
 
-    // Cálculo de montos por método de pago (Efectivo = Bolívares en efectivo, Divisas = Dólares)
     let efectivoBs = 0;
     let divisaDolar = 0;
     let pagoMovilBs = 0;
@@ -572,7 +538,7 @@ export function FinancialDashboard(props: any) {
                 {currentSection === "inventario" && "Módulo de Inventario"}
               </h2>
               <p className="text-emerald-100 text-sm mt-1">
-                Control seguro con respaldo dual.
+                Control seguro en la nube.
               </p>
             </div>
 
@@ -753,9 +719,18 @@ export function FinancialDashboard(props: any) {
                           </span>
                           <p className="text-xs text-gray-400 mt-2">{new Date(sale.fecha).toLocaleString()}</p>
                         </div>
-                        <div className="text-right">
-                          <p className="text-lg font-black text-emerald-600">${sale.totalDolares.toFixed(2)}</p>
-                          <p className="text-xs font-bold text-gray-500">{sale.totalBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</p>
+                        <div className="flex items-center gap-4">
+                          <div className="text-right">
+                            <p className="text-lg font-black text-emerald-600">${sale.totalDolares.toFixed(2)}</p>
+                            <p className="text-xs font-bold text-gray-500">{sale.totalBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</p>
+                          </div>
+                          <button 
+                            onClick={() => eliminarVenta(sale.id)}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-xl transition"
+                            title="Eliminar venta del historial"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
                         </div>
                       </div>
 
@@ -858,7 +833,7 @@ export function FinancialDashboard(props: any) {
                       ) : (
                         <tr>
                           <td colSpan={7} className="text-center py-12 text-gray-500">
-                            No se encontraron productos con ese criterio de búsqueda.
+                            No se encontraron productos en la base de datos.
                           </td>
                         </tr>
                       )}
