@@ -334,14 +334,19 @@ export function FinancialDashboard(props: any) {
     return true;
   });
 
-  const productosFiltradosInventario = products.filter(p => 
-    p.nombre.toLowerCase().includes(busquedaInventario.toLowerCase()) || 
-    p.codigo.toLowerCase().includes(busquedaInventario.toLowerCase())
-  );
+  // Filtrar y ordenar alfabéticamente por nombre de producto
+  const productosFiltradosInventario = products
+    .filter(p => 
+      p.nombre.toLowerCase().includes(busquedaInventario.toLowerCase()) || 
+      p.codigo.toLowerCase().includes(busquedaInventario.toLowerCase())
+    )
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" }));
 
   // Cálculos para el resumen general
   const totalProductosRegistrados = products.length;
-  const productosStockBajo = products.filter(p => Number(p.cantidad) <= 5);
+  const productosStockBajo = products
+    .filter(p => Number(p.cantidad) <= 5)
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" }));
 
   const generarReportePDF = () => {
     const ventasDelDia = sales.filter((sale: any) => {
@@ -575,7 +580,6 @@ export function FinancialDashboard(props: any) {
               <div>
                 <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4">Resumen general</h3>
                 <section className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                  {/* Card 1: Cantidad de productos en inventario */}
                   <div 
                     onClick={() => setCurrentSection("inventario")}
                     className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm cursor-pointer hover:border-emerald-500 transition flex items-center justify-between"
@@ -589,7 +593,6 @@ export function FinancialDashboard(props: any) {
                     </div>
                   </div>
 
-                  {/* Card 2: Stock bajo (<= 5) */}
                   <div 
                     onClick={() => setModalStockBajoOpen(true)}
                     className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm cursor-pointer hover:border-amber-500 transition flex items-center justify-between"
@@ -603,7 +606,6 @@ export function FinancialDashboard(props: any) {
                     </div>
                   </div>
 
-                  {/* Card 3: Ventas registradas */}
                   <div 
                     onClick={() => setCurrentSection("ventas")}
                     className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm cursor-pointer hover:border-emerald-500 transition flex items-center justify-between"
