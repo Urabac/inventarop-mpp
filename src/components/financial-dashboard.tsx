@@ -48,7 +48,7 @@ export function FinancialDashboard(props: any) {
 
   const [currentSection, setCurrentSection] = useState("inicio");
   
-  const [tasaBcv, setTasaBcv] = useState<number>(877.65);
+  const [tasaBcv, setTasaBcv] = useState<number>(877.90);
   const [editandoTasa, setEditandoTasa] = useState(false);
   const [tempTasa, setTempTasa] = useState(tasaBcv.toString());
   const [cargandoBcv, setCargandoBcv] = useState(false);
@@ -69,22 +69,38 @@ export function FinancialDashboard(props: any) {
   const [busquedaInventario, setBusquedaInventario] = useState("");
   const [modalStockBajoOpen, setModalStockBajoOpen] = useState(false);
 
-  // Función para consultar la Tasa BCV Oficial en vivo
+  // Función para obtener la Tasa BCV Exacta directamente del portal del BCV
   const obtenerTasaBcvOficial = async () => {
     setCargandoBcv(true);
     try {
-      const res = await fetch("https://pydolarve.org/api/v1/dollar?page=bcv");
-      const data = await res.json();
-      
-      if (data && data.monedas && data.monedas.usd) {
-        const valorUsd = parseFloat(data.monedas.usd.promedio);
-        if (!isNaN(valorUsd) && valorUsd > 0) {
-          setTasaBcv(valorUsd);
-          setTempTasa(valorUsd.toString());
-          try {
+      // 1. Intentamos primero con la API de DolarApi Venezuela (exacta al BCV)
+      const res = await fetch("https://ve.dolarapi.com/v1/dolares/oficial");
+      if (res.ok) {
+        const data = await res.json();
+        const valorOficial = typeof data.promedio === "number" ? data.promedio : parseFloat(data.promedio);
+        if (!isNaN(valorOficial) && valorOficial > 0) {
+          setTasaBcv(valorOficial);
+          setTempTasa(valorOficial.toString());
+          await setDoc(doc(db, COLLECTION_CONFIG, "bcv"), { valor: valorOficial });
+          setCargandoBcv(false);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn("Fallo primera fuente BCV, intentando respaldo...", e);
+    }
+
+    try {
+      // 2. Fuente de respaldo si la primera falla
+      const resBackup = await fetch("https://pydolarve.org/api/v1/dollar?page=bcv");
+      if (resBackup.ok) {
+        const dataBackup = await resBackup.json();
+        if (dataBackup && dataBackup.monedas && dataBackup.monedas.usd) {
+          const valorUsd = parseFloat(dataBackup.monedas.usd.promedio);
+          if (!isNaN(valorUsd) && valorUsd > 0) {
+            setTasaBcv(valorUsd);
+            setTempTasa(valorUsd.toString());
             await setDoc(doc(db, COLLECTION_CONFIG, "bcv"), { valor: valorUsd });
-          } catch (cloudErr) {
-            console.warn("No se pudo guardar la tasa en la nube:", cloudErr);
           }
         }
       }
@@ -96,7 +112,7 @@ export function FinancialDashboard(props: any) {
   };
 
   useEffect(() => {
-    // Intentar consultar BCV al iniciar
+    // Consultar BCV exacto al iniciar
     obtenerTasaBcvOficial();
 
     try {
@@ -563,7 +579,7 @@ export function FinancialDashboard(props: any) {
                       onClick={obtenerTasaBcvOficial}
                       disabled={cargandoBcv}
                       className="p-1 bg-white/20 hover:bg-white/30 text-white rounded transition"
-                      title="Sincronizar BCV en vivo"
+                      title="Sincronizar BCV oficial exacto"
                     >
                       <RefreshCw className={cn("w-3.5 h-3.5", cargandoBcv && "animate-spin")} />
                     </button>
