@@ -13,7 +13,8 @@ import {
   DollarSign,
   Search,
   Printer,
-  AlertTriangle
+  AlertTriangle,
+  RefreshCw
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -50,6 +51,7 @@ export function FinancialDashboard(props: any) {
   const [tasaBcv, setTasaBcv] = useState<number>(877.65);
   const [editandoTasa, setEditandoTasa] = useState(false);
   const [tempTasa, setTempTasa] = useState(tasaBcv.toString());
+  const [cargandoBcv, setCargandoBcv] = useState(false);
 
   const [products, setProducts] = useState<any[]>(() => {
     const saved = localStorage.getItem(COLLECTION_INVENTARIO);
@@ -67,7 +69,36 @@ export function FinancialDashboard(props: any) {
   const [busquedaInventario, setBusquedaInventario] = useState("");
   const [modalStockBajoOpen, setModalStockBajoOpen] = useState(false);
 
+  // Función para consultar la Tasa BCV Oficial en vivo
+  const obtenerTasaBcvOficial = async () => {
+    setCargandoBcv(true);
+    try {
+      const res = await fetch("https://pydolarve.org/api/v1/dollar?page=bcv");
+      const data = await res.json();
+      
+      if (data && data.monedas && data.monedas.usd) {
+        const valorUsd = parseFloat(data.monedas.usd.promedio);
+        if (!isNaN(valorUsd) && valorUsd > 0) {
+          setTasaBcv(valorUsd);
+          setTempTasa(valorUsd.toString());
+          try {
+            await setDoc(doc(db, COLLECTION_CONFIG, "bcv"), { valor: valorUsd });
+          } catch (cloudErr) {
+            console.warn("No se pudo guardar la tasa en la nube:", cloudErr);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn("No se pudo obtener la tasa BCV automáticamente:", error);
+    } finally {
+      setCargandoBcv(false);
+    }
+  };
+
   useEffect(() => {
+    // Intentar consultar BCV al iniciar
+    obtenerTasaBcvOficial();
+
     try {
       const unsubProducts = onSnapshot(collection(db, COLLECTION_INVENTARIO), (snapshot) => {
         if (!snapshot.empty) {
@@ -334,7 +365,6 @@ export function FinancialDashboard(props: any) {
     return true;
   });
 
-  // Filtrar y ordenar alfabéticamente por nombre de producto
   const productosFiltradosInventario = products
     .filter(p => 
       p.nombre.toLowerCase().includes(busquedaInventario.toLowerCase()) || 
@@ -342,7 +372,6 @@ export function FinancialDashboard(props: any) {
     )
     .sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" }));
 
-  // Cálculos para el resumen general
   const totalProductosRegistrados = products.length;
   const productosStockBajo = products
     .filter(p => Number(p.cantidad) <= 5)
@@ -528,7 +557,15 @@ export function FinancialDashboard(props: any) {
                       onClick={() => { setTempTasa(tasaBcv.toString()); setEditandoTasa(true); }}
                       className="text-xs bg-white/20 hover:bg-white/30 text-white px-2 py-0.5 rounded font-medium transition"
                     >
-                      Asignar / Editar
+                      Editar
+                    </button>
+                    <button 
+                      onClick={obtenerTasaBcvOficial}
+                      disabled={cargandoBcv}
+                      className="p-1 bg-white/20 hover:bg-white/30 text-white rounded transition"
+                      title="Sincronizar BCV en vivo"
+                    >
+                      <RefreshCw className={cn("w-3.5 h-3.5", cargandoBcv && "animate-spin")} />
                     </button>
                   </div>
                 )}
