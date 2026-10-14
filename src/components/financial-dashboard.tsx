@@ -73,7 +73,6 @@ export function FinancialDashboard(props: any) {
   const obtenerTasaBcvOficial = async () => {
     setCargandoBcv(true);
     try {
-      // 1. Intentamos primero con la API de DolarApi Venezuela (exacta al BCV)
       const res = await fetch("https://ve.dolarapi.com/v1/dolares/oficial");
       if (res.ok) {
         const data = await res.json();
@@ -91,7 +90,6 @@ export function FinancialDashboard(props: any) {
     }
 
     try {
-      // 2. Fuente de respaldo si la primera falla
       const resBackup = await fetch("https://pydolarve.org/api/v1/dollar?page=bcv");
       if (resBackup.ok) {
         const dataBackup = await resBackup.json();
@@ -112,7 +110,6 @@ export function FinancialDashboard(props: any) {
   };
 
   useEffect(() => {
-    // Consultar BCV exacto al iniciar
     obtenerTasaBcvOficial();
 
     try {
@@ -433,7 +430,7 @@ export function FinancialDashboard(props: any) {
           <p class="subtitle">Reporte Diario de Ventas</p>
           <div class="info">
             <strong>Fecha del reporte:</strong> ${new Date().toLocaleDateString()} <br>
-            <strong>Tasa BCV aplicada:</strong> ${tasaBcv} BS
+            <strong>Tasa BCV aplicada:</strong> ${tasaBcv.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS
           </div>
           <table>
             <thead>
@@ -454,14 +451,14 @@ export function FinancialDashboard(props: any) {
                   <td>${s.referencia || "N/A"}</td>
                   <td>${s.items.map((i: any) => `${i.qty}x ${i.nombre}`).join(", ")}</td>
                   <td class="num">$${s.totalDolares.toFixed(2)}</td>
-                  <td class="num">${s.totalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</td>
+                  <td class="num">${s.totalBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</td>
                 </tr>
               `).join("")}
             </tbody>
           </table>
           <div class="totales">
             <p>Total del Día ($): $${totalDolarDia.toFixed(2)}</p>
-            <p>Total del Día (BS): ${totalBsDia.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</p>
+            <p>Total del Día (BS): ${totalBsDia.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</p>
           </div>
           <div class="print-btn">
             <button onclick="window.print()">Imprimir / Guardar como PDF</button>
@@ -567,7 +564,7 @@ export function FinancialDashboard(props: any) {
                 ) : (
                   <div className="flex items-center gap-2">
                     <span className="text-lg font-bold text-white">
-                      {tasaBcv.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS
+                      {tasaBcv.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS
                     </span>
                     <button 
                       onClick={() => { setTempTasa(tasaBcv.toString()); setEditandoTasa(true); }}
@@ -726,7 +723,7 @@ export function FinancialDashboard(props: any) {
                         </div>
                         <div className="text-right">
                           <p className="text-lg font-black text-emerald-600">${sale.totalDolares.toFixed(2)}</p>
-                          <p className="text-xs font-bold text-gray-500">{sale.totalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</p>
+                          <p className="text-xs font-bold text-gray-500">{sale.totalBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</p>
                         </div>
                       </div>
 
@@ -757,7 +754,7 @@ export function FinancialDashboard(props: any) {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white rounded-2xl border border-gray-200 p-6 shadow-sm gap-4">
                 <div>
                   <h3 className="text-lg font-bold text-gray-900">Inventario y Precios Automáticos</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Los precios de venta y bolívares se calculan con base en la Tasa BCV ({tasaBcv} BS).</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Los precios de venta y bolívares se calculan con base en la Tasa BCV ({tasaBcv.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS).</p>
                 </div>
                 <Button onClick={abrirModalNuevo} className="bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-2">
                   <Plus className="w-4 h-4" /> Agregar Producto
@@ -806,7 +803,7 @@ export function FinancialDashboard(props: any) {
                               </td>
                               <td className="py-4 px-6 text-right font-medium text-gray-600">${prod.pCompra.toFixed(2)}</td>
                               <td className="py-4 px-6 text-right font-bold text-emerald-600">${calc.pVenta.toFixed(2)}</td>
-                              <td className="py-4 px-6 text-right font-black text-gray-900">{calc.pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</td>
+                              <td className="py-4 px-6 text-right font-black text-gray-900">{calc.pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</td>
                               <td className="py-4 px-6 text-center flex items-center justify-center gap-2">
                                 <button 
                                   onClick={() => abrirModalEditar(prod)} 
@@ -931,7 +928,7 @@ export function FinancialDashboard(props: any) {
                         <div key={prod.id} className="p-3 flex justify-between items-center hover:bg-gray-50">
                           <div>
                             <p className="font-bold text-gray-900 text-sm">{prod.nombre}</p>
-                            <p className="text-xs text-gray-500">Stock: {prod.cantidad} | Venta: ${calc.pVenta} ({calc.pFinalBs} BS)</p>
+                            <p className="text-xs text-gray-500">Stock: {prod.cantidad} | Venta: ${calc.pVenta} ({calc.pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS)</p>
                           </div>
                           <Button 
                             onClick={() => { agregarAlCarrito(prod); setBusquedaProducto(""); }}
@@ -956,7 +953,7 @@ export function FinancialDashboard(props: any) {
                       <div key={item.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border border-gray-100">
                         <div>
                           <p className="font-bold text-gray-900 text-sm">{item.nombre}</p>
-                          <p className="text-xs text-gray-500">${item.pVenta} c/u ({item.pFinalBs} BS)</p>
+                          <p className="text-xs text-gray-500">${item.pVenta} c/u ({item.pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS)</p>
                         </div>
                         <div className="flex items-center gap-3">
                           <div className="flex items-center gap-2 bg-white border border-gray-200 px-2 py-1 rounded-lg">
@@ -981,7 +978,7 @@ export function FinancialDashboard(props: any) {
                 </div>
                 <div className="flex justify-between items-center border-t border-emerald-100/60 pt-2">
                   <span className="text-sm font-bold text-gray-600">Total Venta (BS):</span>
-                  <span className="text-xl font-black text-gray-900">{totalVentaBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</span>
+                  <span className="text-xl font-black text-gray-900">{totalVentaBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</span>
                 </div>
 
                 <div className="space-y-2 pt-2 border-t border-emerald-100/60">
@@ -1117,7 +1114,7 @@ export function FinancialDashboard(props: any) {
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-600">Precio Final (BS):</span>
-                    <span className="font-black text-gray-900">{calcularPrecios(parseFloat(formPCompra)).pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2 })} BS</span>
+                    <span className="font-black text-gray-900">{calcularPrecios(parseFloat(formPCompra)).pFinalBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</span>
                   </div>
                 </div>
               )}
