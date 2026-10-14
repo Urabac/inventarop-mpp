@@ -46,45 +46,14 @@ const COLLECTION_VENTAS = "motopartes_pirueta_ventas";
 const COLLECTION_CONFIG = "motopartes_pirueta_configuracion";
 
 export function FinancialDashboard(props: any) {
-  // Manejo de autenticación interna si no viene desde props
+  // 1. TODOS LOS HOOKS SE DECLARAN PRIMERO Y SIN CONDICIONALES
   const [user, setUser] = useState<any>(null);
   const [cargandoAuth, setCargandoAuth] = useState(true);
   const [emailInput, setEmailInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
   const [errorLogin, setErrorLogin] = useState("");
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setCargandoAuth(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorLogin("");
-    try {
-      await signInWithEmailAndPassword(auth, emailInput, passwordInput);
-    } catch (err: any) {
-      console.error("Error de autenticación:", err);
-      setErrorLogin("Correo o contraseña incorrectos.");
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      if (props.logout) {
-        props.logout();
-      }
-    } catch (err) {
-      console.error("Error al cerrar sesión:", err);
-    }
-  };
-
   const [currentSection, setCurrentSection] = useState("inicio");
-  
   const [tasaBcv, setTasaBcv] = useState<number>(877.90);
   const [editandoTasa, setEditandoTasa] = useState(false);
   const [tempTasa, setTempTasa] = useState(tasaBcv.toString());
@@ -95,6 +64,29 @@ export function FinancialDashboard(props: any) {
 
   const [busquedaInventario, setBusquedaInventario] = useState("");
   const [modalStockBajoOpen, setModalStockBajoOpen] = useState(false);
+
+  const [modalProductoOpen, setModalProductoOpen] = useState(false);
+  const [editandoId, setEditandoId] = useState<string | null>(null);
+  const [formCodigo, setFormCodigo] = useState("");
+  const [formNombre, setFormNombre] = useState("");
+  const [formCantidad, setFormCantidad] = useState("");
+  const [formPCompra, setFormPCompra] = useState("");
+
+  const [modalVentaOpen, setModalVentaOpen] = useState(false);
+  const [carrito, setCarrito] = useState<any[]>([]);
+  const [busquedaProducto, setBusquedaProducto] = useState("");
+  const [metodoPago, setMetodoPago] = useState("Efectivo");
+  const [referenciaPago, setReferenciaPago] = useState("");
+  const [filtroVentas, setFiltroVentas] = useState("dia");
+
+  // Efecto de Autenticación
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setCargandoAuth(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const obtenerTasaBcvOficial = async () => {
     setCargandoBcv(true);
@@ -135,6 +127,7 @@ export function FinancialDashboard(props: any) {
     }
   };
 
+  // Efecto de Sincronización de Datos (solo corre si el usuario está autenticado)
   useEffect(() => {
     if (!user) return;
     obtenerTasaBcvOficial();
@@ -171,77 +164,27 @@ export function FinancialDashboard(props: any) {
     };
   }, [user]);
 
-  if (cargandoAuth) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 v-12 border-b-2 border-emerald-600"></div>
-      </div>
-    );
-  }
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorLogin("");
+    try {
+      await signInWithEmailAndPassword(auth, emailInput, passwordInput);
+    } catch (err: any) {
+      console.error("Error de autenticación:", err);
+      setErrorLogin("Correo o contraseña incorrectos.");
+    }
+  };
 
-  // Si no ha iniciado sesión, mostrar pantalla de Login elegante
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-teal-900 to-gray-900 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl border border-gray-100 space-y-6">
-          <div className="text-center space-y-2">
-            <div className="inline-flex p-3 bg-emerald-50 text-emerald-600 rounded-2xl mb-2">
-              <ShieldCheck className="w-8 h-8" />
-            </div>
-            <h1 className="text-2xl font-black text-gray-900">Moto Partes Pirueta</h1>
-            <p className="text-xs text-gray-500">Ingresa tus credenciales autorizadas de Firebase</p>
-          </div>
-
-          <form onSubmit={handleLogin} className="space-y-4">
-            {errorLogin && (
-              <div className="p-3 bg-red-50 border border-red-200 text-red-600 text-xs font-bold rounded-xl text-center">
-                {errorLogin}
-              </div>
-            )}
-
-            <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Correo Electrónico</label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-gray-400 absolute left-3.5 top-3.5" />
-                <input 
-                  type="email" 
-                  value={emailInput}
-                  onChange={(e) => setEmailInput(e.target.value)}
-                  placeholder="admin@motopartes.com"
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-gray-50/50"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Contraseña</label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-gray-400 absolute left-3.5 top-3.5" />
-                <input 
-                  type="password" 
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-gray-50/50"
-                  required
-                />
-              </div>
-            </div>
-
-            <Button 
-              type="submit" 
-              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-md transition"
-            >
-              Iniciar Sesión en el Sistema
-            </Button>
-          </form>
-
-          <p className="text-center text-[10px] text-gray-400">Sistema protegido con Firebase Authentication</p>
-        </div>
-      </div>
-    );
-  }
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      if (props.logout) {
+        props.logout();
+      }
+    } catch (err) {
+      console.error("Error al cerrar sesión:", err);
+    }
+  };
 
   const guardarTasa = async () => {
     const val = parseFloat(tempTasa);
@@ -269,13 +212,6 @@ export function FinancialDashboard(props: any) {
       pFinalBs: Number(pFinalBs.toFixed(2))
     };
   };
-
-  const [modalProductoOpen, setModalProductoOpen] = useState(false);
-  const [editandoId, setEditandoId] = useState<string | null>(null);
-  const [formCodigo, setFormCodigo] = useState("");
-  const [formNombre, setFormNombre] = useState("");
-  const [formCantidad, setFormCantidad] = useState("");
-  const [formPCompra, setFormPCompra] = useState("");
 
   const abrirModalNuevo = () => {
     setEditandoId(null);
@@ -341,13 +277,6 @@ export function FinancialDashboard(props: any) {
       }
     }
   };
-
-  const [modalVentaOpen, setModalVentaOpen] = useState(false);
-  const [carrito, setCarrito] = useState<any[]>([]);
-  const [busquedaProducto, setBusquedaProducto] = useState("");
-  const [metodoPago, setMetodoPago] = useState("Efectivo");
-  const [referenciaPago, setReferenciaPago] = useState("");
-  const [filtroVentas, setFiltroVentas] = useState("dia");
 
   const agregarAlCarrito = (prod: any) => {
     const productoInventario = products.find(p => p.id === prod.id);
@@ -575,6 +504,79 @@ export function FinancialDashboard(props: any) {
     ventanaReporte.document.close();
   };
 
+  // 2. RENDERIZADO CONDICIONAL DE PANTALLAS (Despues de todos los hooks)
+  if (cargandoAuth) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-teal-900 to-gray-900 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl border border-gray-100 space-y-6">
+          <div className="text-center space-y-2">
+            <div className="inline-flex p-3 bg-emerald-50 text-emerald-600 rounded-2xl mb-2">
+              <ShieldCheck className="w-8 h-8" />
+            </div>
+            <h1 className="text-2xl font-black text-gray-900">Moto Partes Pirueta</h1>
+            <p className="text-xs text-gray-500">Ingresa tus credenciales autorizadas de Firebase</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            {errorLogin && (
+              <div className="p-3 bg-red-50 border border-red-200 text-red-600 text-xs font-bold rounded-xl text-center">
+                {errorLogin}
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Correo Electrónico</label>
+              <div className="relative">
+                <Mail className="w-4 h-4 text-gray-400 absolute left-3.5 top-3.5" />
+                <input 
+                  type="email" 
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                  placeholder="admin@motopartes.com"
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-gray-50/50"
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Contraseña</label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-gray-400 absolute left-3.5 top-3.5" />
+                <input 
+                  type="password" 
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-gray-50/50"
+                  required
+                />
+              </div>
+            </div>
+
+            <Button 
+              type="submit" 
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-md transition cursor-pointer"
+            >
+              Iniciar Sesión en el Sistema
+            </Button>
+          </form>
+
+          <p className="text-center text-[10px] text-gray-400">Sistema protegido con Firebase Authentication</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. DASHBOARD PRINCIPAL (Si el usuario ya inició sesión)
   return (
     <div className="min-h-screen bg-gray-50 flex">
       <aside className="w-64 bg-white border-r border-gray-200 hidden md:flex flex-col justify-between">
@@ -589,7 +591,7 @@ export function FinancialDashboard(props: any) {
             <button
               onClick={() => setCurrentSection("inicio")}
               className={cn(
-                "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition",
+                "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition cursor-pointer",
                 currentSection === "inicio" ? "bg-emerald-50 text-emerald-700 font-bold" : "text-gray-600 hover:bg-gray-100"
               )}
             >
@@ -599,7 +601,7 @@ export function FinancialDashboard(props: any) {
             <button
               onClick={() => setCurrentSection("ventas")}
               className={cn(
-                "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition",
+                "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition cursor-pointer",
                 currentSection === "ventas" ? "bg-emerald-50 text-emerald-700 font-bold" : "text-gray-600 hover:bg-gray-100"
               )}
             >
@@ -609,7 +611,7 @@ export function FinancialDashboard(props: any) {
             <button
               onClick={() => setCurrentSection("inventario")}
               className={cn(
-                "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition",
+                "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition cursor-pointer",
                 currentSection === "inventario" ? "bg-emerald-50 text-emerald-700 font-bold" : "text-gray-600 hover:bg-gray-100"
               )}
             >
@@ -663,7 +665,7 @@ export function FinancialDashboard(props: any) {
                       onChange={(e) => setTempTasa(e.target.value)}
                       className="w-28 px-2 py-1 text-gray-900 text-sm rounded font-bold bg-white"
                     />
-                    <button onClick={guardarTasa} className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-bold rounded">
+                    <button onClick={guardarTasa} className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-bold rounded cursor-pointer">
                       Confirmar
                     </button>
                   </div>
@@ -674,14 +676,14 @@ export function FinancialDashboard(props: any) {
                     </span>
                     <button 
                       onClick={() => { setTempTasa(tasaBcv.toString()); setEditandoTasa(true); }}
-                      className="text-xs bg-white/20 hover:bg-white/30 text-white px-2 py-0.5 rounded font-medium transition"
+                      className="text-xs bg-white/20 hover:bg-white/30 text-white px-2 py-0.5 rounded font-medium transition cursor-pointer"
                     >
                       Editar
                     </button>
                     <button 
                       onClick={obtenerTasaBcvOficial}
                       disabled={cargandoBcv}
-                      className="p-1 bg-white/20 hover:bg-white/30 text-white rounded transition"
+                      className="p-1 bg-white/20 hover:bg-white/30 text-white rounded transition cursor-pointer"
                       title="Sincronizar BCV oficial exacto"
                     >
                       <RefreshCw className={cn("w-3.5 h-3.5", cargandoBcv && "animate-spin")} />
@@ -701,7 +703,7 @@ export function FinancialDashboard(props: any) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <button 
                     onClick={() => { setModalVentaOpen(true); }}
-                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm hover:border-emerald-500 hover:shadow-md transition text-left flex items-center justify-between group"
+                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm hover:border-emerald-500 hover:shadow-md transition text-left flex items-center justify-between group cursor-pointer"
                   >
                     <div className="flex items-center gap-4">
                       <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl group-hover:bg-emerald-600 group-hover:text-white transition">
@@ -717,7 +719,7 @@ export function FinancialDashboard(props: any) {
 
                   <button 
                     onClick={() => setCurrentSection("inventario")}
-                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm hover:border-emerald-500 hover:shadow-md transition text-left flex items-center justify-between group"
+                    className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm hover:border-emerald-500 hover:shadow-md transition text-left flex items-center justify-between group cursor-pointer"
                   >
                     <div className="flex items-center gap-4">
                       <div className="p-3 bg-blue-50 text-blue-600 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition">
@@ -790,27 +792,27 @@ export function FinancialDashboard(props: any) {
                   <div className="flex bg-gray-100 p-1 rounded-xl">
                     <button 
                       onClick={() => setFiltroVentas("dia")}
-                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition", filtroVentas === "dia" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer", filtroVentas === "dia" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
                     >
                       Día
                     </button>
                     <button 
                       onClick={() => setFiltroVentas("semana")}
-                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition", filtroVentas === "semana" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer", filtroVentas === "semana" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
                     >
                       Semana
                     </button>
                     <button 
                       onClick={() => setFiltroVentas("mes")}
-                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition", filtroVentas === "mes" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer", filtroVentas === "mes" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
                     >
                       Mes
                     </button>
                   </div>
-                  <Button onClick={generarReportePDF} variant="outline" className="border-gray-300 text-gray-700 font-bold flex items-center gap-2">
+                  <Button onClick={generarReportePDF} variant="outline" className="border-gray-300 text-gray-700 font-bold flex items-center gap-2 cursor-pointer">
                     <Printer className="w-4 h-4" /> Generar Reporte
                   </Button>
-                  <Button onClick={() => setModalVentaOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-2">
+                  <Button onClick={() => setModalVentaOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-2 cursor-pointer">
                     <Plus className="w-4 h-4" /> Nueva Venta
                   </Button>
                 </div>
@@ -871,7 +873,7 @@ export function FinancialDashboard(props: any) {
                   <h3 className="text-lg font-bold text-gray-900">Inventario y Precios Automáticos</h3>
                   <p className="text-xs text-gray-500 mt-0.5">Los precios de venta y bolívares se calculan con base en la Tasa BCV ({tasaBcv.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS).</p>
                 </div>
-                <Button onClick={abrirModalNuevo} className="bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-2">
+                <Button onClick={abrirModalNuevo} className="bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-2 cursor-pointer">
                   <Plus className="w-4 h-4" /> Agregar Producto
                 </Button>
               </div>
