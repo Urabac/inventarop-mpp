@@ -221,7 +221,6 @@ export function FinancialDashboard(props: any) {
     }
   };
 
-  // Función para eliminar una venta del historial de Firebase
   const eliminarVenta = async (id: string) => {
     if (confirm("¿Estás seguro de eliminar esta venta del historial?")) {
       try {
@@ -322,7 +321,7 @@ export function FinancialDashboard(props: any) {
       setMetodoPago("Efectivo");
       setReferenciaPago("");
       setModalVentaOpen(false);
-      alert("¡Venta registrada y descontada del inventario en la base de datos con éxito!");
+      // Alerta eliminada exitosamente para mayor fluidez.
     } catch (e: any) {
       console.error("Error al procesar la venta en Firebase:", e);
       alert("Error al registrar la venta en la base de datos: " + e.message);
