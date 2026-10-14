@@ -14,7 +14,10 @@ import {
   Search,
   Printer,
   AlertTriangle,
-  RefreshCw
+  RefreshCw,
+  Lock,
+  Mail,
+  ShieldCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -22,6 +25,7 @@ import { cn } from "@/lib/utils";
 // --- CONFIGURACIÓN DE FIREBASE ---
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc, onSnapshot } from "firebase/firestore";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDXvWnkdShjz__lIZKIZY2qaEhRrcp_gCo",
@@ -35,16 +39,49 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
 
 const COLLECTION_INVENTARIO = "motopartes_pirueta_inventario";
 const COLLECTION_VENTAS = "motopartes_pirueta_ventas";
 const COLLECTION_CONFIG = "motopartes_pirueta_configuracion";
 
 export function FinancialDashboard(props: any) {
-  const {
-    userEmail,
-    logout,
-  } = props;
+  // Manejo de autenticación interna si no viene desde props
+  const [user, setUser] = useState<any>(null);
+  const [cargandoAuth, setCargandoAuth] = useState(true);
+  const [emailInput, setEmailInput] = useState("");
+  const [passwordInput, setPasswordInput] = useState("");
+  const [errorLogin, setErrorLogin] = useState("");
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setCargandoAuth(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorLogin("");
+    try {
+      await signInWithEmailAndPassword(auth, emailInput, passwordInput);
+    } catch (err: any) {
+      console.error("Error de autenticación:", err);
+      setErrorLogin("Correo o contraseña incorrectos.");
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      if (props.logout) {
+        props.logout();
+      }
+    } catch (err) {
+      console.error("Error al cerrar sesión:", err);
+    }
+  };
 
   const [currentSection, setCurrentSection] = useState("inicio");
   
@@ -99,6 +136,7 @@ export function FinancialDashboard(props: any) {
   };
 
   useEffect(() => {
+    if (!user) return;
     obtenerTasaBcvOficial();
 
     const unsubProducts = onSnapshot(collection(db, COLLECTION_INVENTARIO), (snapshot) => {
@@ -131,7 +169,79 @@ export function FinancialDashboard(props: any) {
       unsubSales();
       unsubTasa();
     };
-  }, []);
+  }, [user]);
+
+  if (cargandoAuth) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 v-12 border-b-2 border-emerald-600"></div>
+      </div>
+    );
+  }
+
+  // Si no ha iniciado sesión, mostrar pantalla de Login elegante
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-teal-900 to-gray-900 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl border border-gray-100 space-y-6">
+          <div className="text-center space-y-2">
+            <div className="inline-flex p-3 bg-emerald-50 text-emerald-600 rounded-2xl mb-2">
+              <ShieldCheck className="w-8 h-8" />
+            </div>
+            <h1 className="text-2xl font-black text-gray-900">Moto Partes Pirueta</h1>
+            <p className="text-xs text-gray-500">Ingresa tus credenciales autorizadas de Firebase</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            {errorLogin && (
+              <div className="p-3 bg-red-50 border border-red-200 text-red-600 text-xs font-bold rounded-xl text-center">
+                {errorLogin}
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Correo Electrónico</label>
+              <div className="relative">
+                <Mail className="w-4 h-4 text-gray-400 absolute left-3.5 top-3.5" />
+                <input 
+                  type="email" 
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                  placeholder="admin@motopartes.com"
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-gray-50/50"
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Contraseña</label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-gray-400 absolute left-3.5 top-3.5" />
+                <input 
+                  type="password" 
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-gray-50/50"
+                  required
+                />
+              </div>
+            </div>
+
+            <Button 
+              type="submit" 
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-md transition"
+            >
+              Iniciar Sesión en el Sistema
+            </Button>
+          </form>
+
+          <p className="text-center text-[10px] text-gray-400">Sistema protegido con Firebase Authentication</p>
+        </div>
+      </div>
+    );
+  }
 
   const guardarTasa = async () => {
     const val = parseFloat(tempTasa);
@@ -321,7 +431,6 @@ export function FinancialDashboard(props: any) {
       setMetodoPago("Efectivo");
       setReferenciaPago("");
       setModalVentaOpen(false);
-      // Alerta eliminada exitosamente para mayor fluidez.
     } catch (e: any) {
       console.error("Error al procesar la venta en Firebase:", e);
       alert("Error al registrar la venta en la base de datos: " + e.message);
@@ -512,11 +621,11 @@ export function FinancialDashboard(props: any) {
 
         <div className="p-4 border-t border-gray-100">
           <div className="px-4 py-2 mb-2 text-xs text-gray-500 truncate">
-            {userEmail || "Administrador"}
+            {user?.email || "Administrador"}
           </div>
           <button
-            onClick={logout}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition"
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition cursor-pointer"
           >
             <LogOut className="w-4 h-4" />
             Cerrar sesión
@@ -725,7 +834,7 @@ export function FinancialDashboard(props: any) {
                           </div>
                           <button 
                             onClick={() => eliminarVenta(sale.id)}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-xl transition"
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-xl transition cursor-pointer"
                             title="Eliminar venta del historial"
                           >
                             <Trash2 className="w-5 h-5" />
@@ -813,14 +922,14 @@ export function FinancialDashboard(props: any) {
                               <td className="py-4 px-6 text-center flex items-center justify-center gap-2">
                                 <button 
                                   onClick={() => abrirModalEditar(prod)} 
-                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
                                   title="Editar"
                                 >
                                   <Edit className="w-4 h-4" />
                                 </button>
                                 <button 
                                   onClick={() => eliminarProducto(prod.id)} 
-                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition"
+                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
                                   title="Eliminar"
                                 >
                                   <Trash2 className="w-4 h-4" />
@@ -861,7 +970,7 @@ export function FinancialDashboard(props: any) {
               </div>
               <button 
                 onClick={() => setModalStockBajoOpen(false)}
-                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition"
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -890,7 +999,7 @@ export function FinancialDashboard(props: any) {
             <div className="mt-6 flex justify-end">
               <Button 
                 onClick={() => setModalStockBajoOpen(false)}
-                className="bg-gray-900 hover:bg-gray-800 text-white font-bold px-6 py-2.5 rounded-xl"
+                className="bg-gray-900 hover:bg-gray-800 text-white font-bold px-6 py-2.5 rounded-xl cursor-pointer"
               >
                 Cerrar
               </Button>
@@ -906,7 +1015,7 @@ export function FinancialDashboard(props: any) {
               <h3 className="text-xl font-black text-gray-900">Registrar Nueva Venta</h3>
               <button 
                 onClick={() => setModalVentaOpen(false)}
-                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition"
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -939,7 +1048,7 @@ export function FinancialDashboard(props: any) {
                           <Button 
                             onClick={() => { agregarAlCarrito(prod); setBusquedaProducto(""); }}
                             size="sm"
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs cursor-pointer"
                             disabled={prod.cantidad <= 0}
                           >
                             {prod.cantidad > 0 ? "Agregar" : "Agotado"}
@@ -963,9 +1072,9 @@ export function FinancialDashboard(props: any) {
                         </div>
                         <div className="flex items-center gap-3">
                           <div className="flex items-center gap-2 bg-white border border-gray-200 px-2 py-1 rounded-lg">
-                            <button onClick={() => cambiarCantidadCarrito(item.id, -1)} className="text-gray-500 font-bold px-1">-</button>
+                            <button onClick={() => cambiarCantidadCarrito(item.id, -1)} className="text-gray-500 font-bold px-1 cursor-pointer">-</button>
                             <span className="text-xs font-bold w-4 text-center">{item.qty}</span>
-                            <button onClick={() => cambiarCantidadCarrito(item.id, 1)} className="text-gray-500 font-bold px-1">+</button>
+                            <button onClick={() => cambiarCantidadCarrito(item.id, 1)} className="text-gray-500 font-bold px-1 cursor-pointer">+</button>
                           </div>
                           <span className="font-bold text-emerald-600 text-sm w-16 text-right">${(item.pVenta * item.qty).toFixed(2)}</span>
                         </div>
@@ -996,7 +1105,7 @@ export function FinancialDashboard(props: any) {
                         type="button"
                         onClick={() => setMetodoPago(metodo)}
                         className={cn(
-                          "py-2 px-3 text-xs font-bold rounded-xl border transition text-center",
+                          "py-2 px-3 text-xs font-bold rounded-xl border transition text-center cursor-pointer",
                           metodoPago === metodo ? "bg-emerald-600 text-white border-emerald-600 shadow-sm" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
                         )}
                       >
@@ -1026,13 +1135,13 @@ export function FinancialDashboard(props: any) {
                 <button
                   type="button"
                   onClick={() => setModalVentaOpen(false)}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition"
+                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <Button
                   onClick={confirmarVenta}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-sm"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-sm cursor-pointer"
                   disabled={carrito.length === 0}
                 >
                   Confirmar y Guardar Venta
@@ -1053,7 +1162,7 @@ export function FinancialDashboard(props: any) {
               <button 
                 type="button"
                 onClick={() => setModalProductoOpen(false)}
-                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition"
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1129,7 +1238,7 @@ export function FinancialDashboard(props: any) {
                 <button
                   type="button"
                   onClick={() => setModalProductoOpen(false)}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition"
+                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition cursor-pointer"
                 >
                   Cancelar
                 </button>
