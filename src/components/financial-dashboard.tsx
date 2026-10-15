@@ -926,7 +926,21 @@ export function FinancialDashboard(props: any) {
             .total-final { margin-top: 15px; font-size: 16px; font-weight: bold; text-align: right; color: #0f172a; border-top: 1px dashed #047857; padding-top: 10px; }
             .print-btn { margin-top: 30px; text-align: center; }
             .print-btn button { background: #047857; color: white; border: none; padding: 10px 20px; font-size: 14px; border-radius: 6px; cursor: pointer; }
-            @media print { .print-btn { display: none; } }
+            .total-final p { margin: 4px 0; }
+            .dev-box { margin-top: 25px; padding: 15px; border: 1px solid #f59e0b; background: #fffbeb; border-radius: 8px; }
+            /* Evita que una fila o un cuadro de totales se parta entre dos páginas */
+            tr, .totales-box, .dev-box { page-break-inside: avoid; break-inside: avoid; }
+            thead { display: table-header-group; }
+            @page { size: A4; margin: 10mm; }
+            @media print {
+              body { margin: 0; }
+              h2 { margin-top: 0; }
+              .info { margin: 12px 0; }
+              table { margin-top: 12px; }
+              th, td { padding: 6px 8px; }
+              .dev-box, .totales-box { margin-top: 14px; padding: 10px; }
+              .print-btn { display: none; }
+            }
           </style>
         </head>
         <body>
@@ -962,7 +976,7 @@ export function FinancialDashboard(props: any) {
             </tbody>
           </table>
 
-          <div style="margin-top: 25px; padding: 15px; border: 1px solid #f59e0b; background: #fffbeb; border-radius: 8px;">
+          <div class="dev-box">
             <h3 style="margin: 0 0 8px 0; color: #b45309; font-size: 15px;">Resumen de Devoluciones del Día</h3>
             <p style="margin: 4px 0; font-size: 13px;">Cantidad de devoluciones/cambios: <strong>${devDelDia.length}</strong></p>
             <p style="margin: 4px 0; font-size: 13px;">Monto total devuelto: <strong>$${totalDevueltoDolar.toFixed(2)} (${fmtBs(totalDevueltoBs)} BS)</strong></p>
