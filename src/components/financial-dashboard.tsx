@@ -91,6 +91,11 @@ export function FinancialDashboard(props: any) {
   const [referenciaPago, setReferenciaPago] = useState("");
   const [filtroVentas, setFiltroVentas] = useState("dia");
 
+  // Cooldown States para evitar doble clic
+  const [guardandoVenta, setGuardandoVenta] = useState(false);
+  const [guardandoProductoState, setGuardandoProductoState] = useState(false);
+  const [guardandoDevolucionState, setGuardandoDevolucionState] = useState(false);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
@@ -244,6 +249,9 @@ export function FinancialDashboard(props: any) {
 
   const guardarProducto = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (guardandoProductoState) return;
+    setGuardandoProductoState(true);
+
     const pCompraNum = parseFloat(formPCompra) || 0;
     const cantidadNum = parseInt(formCantidad) || 0;
 
@@ -263,29 +271,24 @@ export function FinancialDashboard(props: any) {
       setModalProductoOpen(false);
     } catch (error: any) {
       console.error("Error al guardar en Firebase:", error);
-      alert("Hubo un error al guardar en la base de datos: " + error.message);
+    } finally {
+      setTimeout(() => setGuardandoProductoState(false), 2000);
     }
   };
 
   const eliminarProducto = async (id: string) => {
-    if (confirm("¿Estás seguro de eliminar este producto de la base de datos?")) {
-      try {
-        await deleteDoc(doc(db, COLLECTION_INVENTARIO, id));
-      } catch (e: any) {
-        console.error("Error eliminando:", e);
-        alert("No se pudo eliminar: " + e.message);
-      }
+    try {
+      await deleteDoc(doc(db, COLLECTION_INVENTARIO, id));
+    } catch (e: any) {
+      console.error("Error eliminando:", e);
     }
   };
 
   const eliminarVenta = async (id: string) => {
-    if (confirm("¿Estás seguro de eliminar esta venta del historial?")) {
-      try {
-        await deleteDoc(doc(db, COLLECTION_VENTAS, id));
-      } catch (e: any) {
-        console.error("Error eliminando venta:", e);
-        alert("No se pudo eliminar la venta: " + e.message);
-      }
+    try {
+      await deleteDoc(doc(db, COLLECTION_VENTAS, id));
+    } catch (e: any) {
+      console.error("Error eliminando venta:", e);
     }
   };
 
@@ -297,10 +300,7 @@ export function FinancialDashboard(props: any) {
     const itemExistente = carrito.find(item => item.id === prod.id);
     const cantidadActualEnCarrito = itemExistente ? itemExistente.qty : 0;
 
-    if (cantidadActualEnCarrito + 1 > stockDisponible) {
-      alert(`No puedes agregar más unidades. Stock disponible: ${stockDisponible}`);
-      return;
-    }
+    if (cantidadActualEnCarrito + 1 > stockDisponible) return;
 
     if (itemExistente) {
       setCarrito(carrito.map(item => item.id === prod.id ? { ...item, qty: item.qty + 1 } : item));
@@ -316,10 +316,7 @@ export function FinancialDashboard(props: any) {
     setCarrito(carrito.map(item => {
       if (item.id === id) {
         const nuevaQty = item.qty + delta;
-        if (delta > 0 && nuevaQty > stockDisponible) {
-          alert(`Stock insuficiente. Solo quedan ${stockDisponible} unidades disponibles.`);
-          return item;
-        }
+        if (delta > 0 && nuevaQty > stockDisponible) return item;
         return nuevaQty > 0 ? { ...item, qty: nuevaQty } : null;
       }
       return item;
@@ -330,23 +327,10 @@ export function FinancialDashboard(props: any) {
   const totalVentaBs = carrito.reduce((sum, item) => sum + (item.pFinalBs * item.qty), 0);
 
   const confirmarVenta = async () => {
-    if (carrito.length === 0) {
-      alert("El carrito está vacío.");
-      return;
-    }
-    if ((metodoPago === "Pago movil" || metodoPago === "Transferencia") && referenciaPago.length !== 4) {
-      alert("Por favor ingresa un número de referencia válido de exactamente 4 dígitos.");
-      return;
-    }
+    if (carrito.length === 0 || guardandoVenta) return;
+    if ((metodoPago === "Pago movil" || metodoPago === "Transferencia") && referenciaPago.length !== 4) return;
 
-    for (let item of carrito) {
-      const prodActual = products.find(p => p.id === item.id);
-      if (!prodActual || prodActual.cantidad < item.qty) {
-        alert(`Stock insuficiente para el producto: ${item.nombre}`);
-        return;
-      }
-    }
-
+    setGuardandoVenta(true);
     try {
       for (let item of carrito) {
         const prodActual = products.find(p => p.id === item.id);
@@ -373,15 +357,14 @@ export function FinancialDashboard(props: any) {
       setModalVentaOpen(false);
     } catch (e: any) {
       console.error("Error al procesar la venta en Firebase:", e);
-      alert("Error al registrar la venta en la base de datos: " + e.message);
+    } finally {
+      setTimeout(() => setGuardandoVenta(false), 2000);
     }
   };
 
   const procesarDevolucionOCambio = async () => {
-    if (!ventaSeleccionadaDev || !productoDevueltoItem) {
-      alert("Selecciona la venta y el producto a devolver.");
-      return;
-    }
+    if (!ventaSeleccionadaDev || !productoDevueltoItem || guardandoDevolucionState) return;
+    setGuardandoDevolucionState(true);
 
     try {
       const prodInv = products.find(p => p.id === productoDevueltoItem.id);
@@ -410,13 +393,13 @@ export function FinancialDashboard(props: any) {
         }
       } else {
         if (!productoCambioSeleccionado) {
-          alert("Debes seleccionar el producto nuevo por el cual se hará el cambio.");
+          setGuardandoDevolucionState(false);
           return;
         }
 
         const prodNuevoInv = products.find(p => p.id === productoCambioSeleccionado.id);
         if (!prodNuevoInv || prodNuevoInv.cantidad < 1) {
-          alert("Stock insuficiente del producto de cambio.");
+          setGuardandoDevolucionState(false);
           return;
         }
         await updateDoc(doc(db, COLLECTION_INVENTARIO, productoCambioSeleccionado.id), { 
@@ -452,7 +435,7 @@ export function FinancialDashboard(props: any) {
         detalle: detalleOperacion,
         productoDevuelto: productoDevueltoItem.nombre,
         productoNuevo: productoCambioSeleccionado ? productoCambioSeleccionado.nombre : "N/A",
-        montoDevuelto: parseFloat(montoReembolso) || 0,
+        montoReembolsoBs: parseFloat(montoReembolso) || 0,
         comision: comisionDevolucion || "Sin comisión"
       };
 
@@ -464,10 +447,10 @@ export function FinancialDashboard(props: any) {
       setProductoCambioSeleccionado(null);
       setMontoReembolso("");
       setComisionDevolucion("");
-      alert("¡Devolución / Cambio registrado y stock actualizado con éxito!");
     } catch (e: any) {
       console.error("Error al procesar devolución:", e);
-      alert("Error al procesar: " + e.message);
+    } finally {
+      setTimeout(() => setGuardandoDevolucionState(false), 2000);
     }
   };
 
@@ -498,15 +481,11 @@ export function FinancialDashboard(props: any) {
     .filter(p => Number(p.cantidad) <= 5)
     .sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" }));
 
+  // --- REPORTE DE VENTAS CON DEVOLUCIONES RESTADAS ---
   const generarReportePDF = () => {
-    const ventasDelDia = sales.filter((sale: any) => {
-      return new Date(sale.fecha).toDateString() === new Date().toDateString();
-    });
-
-    if (ventasDelDia.length === 0) {
-      alert("No hay ventas registradas el día de hoy para generar el reporte.");
-      return;
-    }
+    const hoyStr = new Date().toDateString();
+    const ventasDelDia = sales.filter((sale: any) => new Date(sale.fecha).toDateString() === hoyStr);
+    const devDelDia = devoluciones.filter((dev: any) => new Date(dev.fecha).toDateString() === hoyStr);
 
     let efectivoBs = 0;
     let divisaDolar = 0;
@@ -514,19 +493,22 @@ export function FinancialDashboard(props: any) {
     let transferenciaBs = 0;
 
     ventasDelDia.forEach(s => {
-      if (s.metodoPago === "Efectivo") {
-        efectivoBs += s.totalBs;
-      } else if (s.metodoPago === "Divisas") {
-        divisaDolar += s.totalDolares;
-      } else if (s.metodoPago === "Pago movil") {
-        pagoMovilBs += s.totalBs;
-      } else if (s.metodoPago === "Transferencia") {
-        transferenciaBs += s.totalBs;
-      }
+      if (s.metodoPago === "Efectivo") efectivoBs += s.totalBs;
+      else if (s.metodoPago === "Divisas") divisaDolar += s.totalDolares;
+      else if (s.metodoPago === "Pago movil") pagoMovilBs += s.totalBs;
+      else if (s.metodoPago === "Transferencia") transferenciaBs += s.totalBs;
     });
 
-    const totalDolarDia = ventasDelDia.reduce((acc, s) => acc + s.totalDolares, 0);
-    const totalBsDia = ventasDelDia.reduce((acc, s) => acc + s.totalBs, 0);
+    let totalDolarDia = ventasDelDia.reduce((acc, s) => acc + s.totalDolares, 0);
+    let totalBsDia = ventasDelDia.reduce((acc, s) => acc + s.totalBs, 0);
+
+    // Calcular total devuelto en el día
+    let totalDevueltoBs = devDelDia.reduce((acc, d) => acc + (d.montoReembolsoBs || 0), 0);
+    let totalDevueltoDolar = totalDevueltoBs / (tasaBcv > 0 ? tasaBcv : 1);
+
+    // Restar devoluciones a los totales de ganancia del día
+    totalDolarDia = Math.max(0, totalDolarDia - totalDevueltoDolar);
+    totalBsDia = Math.max(0, totalBsDia - totalDevueltoBs);
 
     const ventanaReporte = window.open("", "_blank");
     if (!ventanaReporte) return;
@@ -556,7 +538,7 @@ export function FinancialDashboard(props: any) {
         </head>
         <body>
           <h2>MOTO PARTES PIRUETA</h2>
-          <p class="subtitle">Reporte Diario de Ventas</p>
+          <p class="subtitle">Reporte Diario de Ventas (Neto con Devoluciones)</p>
           <div class="info">
             <strong>Fecha del reporte:</strong> ${new Date().toLocaleDateString()} <br>
             <strong>Tasa BCV aplicada:</strong> ${tasaBcv.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS
@@ -586,8 +568,14 @@ export function FinancialDashboard(props: any) {
             </tbody>
           </table>
 
+          <div style="margin-top: 25px; padding: 15px; border: 1px solid #f59e0b; background: #fffbeb; border-radius: 8px;">
+            <h3 style="margin: 0 0 8px 0; color: #b45309; font-size: 15px;">Resumen de Devoluciones del Día</h3>
+            <p style="margin: 4px 0; font-size: 13px;">Cantidad de devoluciones/cambios: <strong>${devDelDia.length}</strong></p>
+            <p style="margin: 4px 0; font-size: 13px;">Monto total devuelto: <strong>$${totalDevueltoDolar.toFixed(2)} (${totalDevueltoBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS)</strong></p>
+          </div>
+
           <div class="totales-box">
-            <h3>Desglose de Cierre por Método de Pago</h3>
+            <h3>Cierre Neto del Día (Menos Devoluciones)</h3>
             <div class="totales-grid">
               <div><span>Efectivo (Bolívares):</span> <strong>${efectivoBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</strong></div>
               <div><span>Divisa (Dólares):</span> <strong>$${divisaDolar.toFixed(2)}</strong></div>
@@ -595,8 +583,8 @@ export function FinancialDashboard(props: any) {
               <div><span>Transferencia (BS):</span> <strong>${transferenciaBs.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</strong></div>
             </div>
             <div class="total-final">
-              <p>Total del Día ($): $${totalDolarDia.toFixed(2)}</p>
-              <p>Total del Día (BS): ${totalBsDia.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</p>
+              <p>Total Neto del Día ($): $${totalDolarDia.toFixed(2)}</p>
+              <p>Total Neto del Día (BS): ${totalBsDia.toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</p>
             </div>
           </div>
 
@@ -1029,7 +1017,7 @@ export function FinancialDashboard(props: any) {
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-sm font-black text-amber-700">Reembolso: ${dev.montoDevuelto.toFixed(2)}</p>
+                          <p className="text-sm font-black text-amber-700">Reembolso: {(dev.montoReembolsoBs || 0).toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</p>
                           <p className="text-xs text-gray-500 font-medium">Comisión: {dev.comision || "N/A"}</p>
                         </div>
                       </div>
@@ -1139,6 +1127,7 @@ export function FinancialDashboard(props: any) {
         </div>
       </main>
 
+      {/* MODAL: REGISTRAR DEVOLUCIÓN O CAMBIO */}
       {modalDevolucionOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto space-y-6">
@@ -1182,7 +1171,7 @@ export function FinancialDashboard(props: any) {
                     ).map(sale => (
                       <div key={sale.id} className="p-3 flex justify-between items-center hover:bg-gray-50">
                         <div>
-                          <p className="font-bold text-gray-900 text-xs">Venta ID: {sale.id.slice(0, 10)} | ${sale.totalDolares.toFixed(2)}</p>
+                          <p className="font-bold text-gray-900 text-xs">Venta ID: {sale.id.slice(0, 10)} | Fecha: {new Date(sale.fecha).toLocaleString()}</p>
                           <p className="text-[11px] text-gray-500">{sale.items.map((i: any) => `${i.qty}x ${i.nombre}`).join(", ")}</p>
                         </div>
                         <Button 
@@ -1201,7 +1190,10 @@ export function FinancialDashboard(props: any) {
               {ventaSeleccionadaDev && (
                 <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-3">
                   <div className="flex justify-between items-center">
-                    <span className="text-xs font-bold text-emerald-800">Venta Seleccionada: {ventaSeleccionadaDev.id.slice(0, 10)}</span>
+                    <div>
+                      <span className="text-xs font-bold text-emerald-800">Venta: {ventaSeleccionadaDev.id.slice(0, 10)}</span>
+                      <p className="text-[11px] text-emerald-700 mt-0.5">Fecha de la venta: <strong>{new Date(ventaSeleccionadaDev.fecha).toLocaleString()}</strong></p>
+                    </div>
                     <button onClick={() => setVentaSeleccionadaDev(null)} className="text-xs text-red-600 font-bold hover:underline cursor-pointer">Cambiar venta</button>
                   </div>
                   <p className="text-xs font-bold text-gray-600 uppercase">2. Selecciona el producto que se devuelve:</p>
@@ -1209,14 +1201,17 @@ export function FinancialDashboard(props: any) {
                     {ventaSeleccionadaDev.items.map((item: any, idx: number) => (
                       <div 
                         key={idx} 
-                        onClick={() => setProductoDevueltoItem(item)}
+                        onClick={() => {
+                          setProductoDevueltoItem(item);
+                          setMontoReembolso((item.pFinalBs * item.qty).toFixed(2));
+                        }}
                         className={cn(
                           "p-3 rounded-xl border flex justify-between items-center cursor-pointer transition",
                           productoDevueltoItem?.id === item.id ? "bg-amber-600 text-white border-amber-600 font-bold" : "bg-white text-gray-800 border-gray-200 hover:bg-gray-50"
                         )}
                       >
                         <span>{item.qty}x {item.nombre}</span>
-                        <span>${(item.pVenta * item.qty).toFixed(2)}</span>
+                        <span>{(item.pFinalBs * item.qty).toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</span>
                       </div>
                     ))}
                   </div>
@@ -1265,7 +1260,7 @@ export function FinancialDashboard(props: any) {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Monto a devolver ($)</label>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Monto a devolver (BS)</label>
                       <input 
                         type="number" 
                         step="0.01"
@@ -1300,9 +1295,9 @@ export function FinancialDashboard(props: any) {
                 <Button
                   onClick={procesarDevolucionOCambio}
                   className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-sm cursor-pointer"
-                  disabled={!ventaSeleccionadaDev || !productoDevueltoItem}
+                  disabled={!ventaSeleccionadaDev || !productoDevueltoItem || guardandoDevolucionState}
                 >
-                  Confirmar Devolución
+                  {guardandoDevolucionState ? "Procesando..." : "Confirmar Devolución"}
                 </Button>
               </div>
             </div>
@@ -1310,6 +1305,7 @@ export function FinancialDashboard(props: any) {
         </div>
       )}
 
+      {/* Modal de Stock Bajo */}
       {modalStockBajoOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
@@ -1363,6 +1359,7 @@ export function FinancialDashboard(props: any) {
         </div>
       )}
 
+      {/* Modal de Nueva Venta */}
       {modalVentaOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
@@ -1497,9 +1494,9 @@ export function FinancialDashboard(props: any) {
                 <Button
                   onClick={confirmarVenta}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-sm cursor-pointer"
-                  disabled={carrito.length === 0}
+                  disabled={carrito.length === 0 || guardandoVenta}
                 >
-                  Confirmar y Guardar Venta
+                  {guardandoVenta ? "Guardando..." : "Confirmar y Guardar Venta"}
                 </Button>
               </div>
             </div>
@@ -1507,6 +1504,7 @@ export function FinancialDashboard(props: any) {
         </div>
       )}
 
+      {/* Modal de Nuevo/Editar Producto */}
       {modalProductoOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100">
@@ -1599,9 +1597,10 @@ export function FinancialDashboard(props: any) {
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2.5 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm cursor-pointer"
+                  disabled={guardandoProductoState}
+                  className="px-6 py-2.5 rounded-xl text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm cursor-pointer disabled:opacity-50"
                 >
-                  {editandoId ? "Actualizar Producto" : "Guardar Producto"}
+                  {guardandoProductoState ? "Guardando..." : (editandoId ? "Actualizar Producto" : "Guardar Producto")}
                 </button>
               </div>
             </form>
