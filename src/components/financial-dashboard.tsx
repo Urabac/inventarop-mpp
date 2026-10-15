@@ -9,6 +9,7 @@ import {
   Edit,
   Trash2,
   Plus,
+  Minus,
   X,
   DollarSign,
   Search,
@@ -27,7 +28,7 @@ import { cn } from "@/lib/utils";
 
 // --- CONFIGURACIÓN DE FIREBASE ---
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc, onSnapshot } from "firebase/firestore";
+import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc, onSnapshot, writeBatch, increment } from "firebase/firestore";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 
 const firebaseConfig = {
@@ -55,12 +56,15 @@ const TOLERANCIA = 0.01; // margen de redondeo en dólares
 
 const necesitaReferencia = (metodo: string) => metodo === "Pago movil" || metodo === "Transferencia";
 const fmtBs = (n: number) => (n || 0).toLocaleString("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const redondear = (n: number) => Number((n || 0).toFixed(2));
 const escapeHtml = (s: any) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 
-// Resumen de métodos usados: "Efectivo + Pago movil"
-const resumenMetodos = (pagos: any[]) => Array.from(new Set(pagos.map((p) => p.metodo))).join(" + ");
-const resumenReferencias = (pagos: any[]) => pagos.map((p) => p.referencia).filter(Boolean).join(", ");
+// Resumen de métodos usados: "Efectivo + Pago movil" (solo cuenta los cobros, no los reembolsos)
+const resumenMetodos = (pagos: any[]) =>
+  Array.from(new Set(pagos.filter((p) => p.monto > 0).map((p) => p.metodo))).join(" + ");
+const resumenReferencias = (pagos: any[]) =>
+  pagos.filter((p) => p.monto > 0).map((p) => p.referencia).filter(Boolean).join(", ");
 
 // Devuelve los pagos de una venta. Las ventas antiguas (sin "pagos") se convierten al nuevo formato.
 const obtenerPagosVenta = (sale: any): any[] => {
@@ -77,6 +81,20 @@ const obtenerPagosVenta = (sale: any): any[] => {
 };
 
 const sumaDolares = (pagos: any[]) => pagos.reduce((acc, p) => acc + (p.montoDolares || 0), 0);
+
+// Muestra un pago en su moneda nativa (los reembolsos salen con signo negativo)
+const fmtPago = (p: any) => {
+  const abs = Math.abs(p.monto || 0);
+  const txt = p.metodo === "Divisas" ? `$${abs.toFixed(2)}` : `${fmtBs(abs)} BS`;
+  return p.monto < 0 ? `-${txt}` : txt;
+};
+
+const etiquetaTipoPago = (tipo: string) =>
+  tipo === "abono" ? "Abono"
+  : tipo === "final" ? "Pago final"
+  : tipo === "devolucion" ? "Reembolso"
+  : tipo === "cambio" ? "Cobro por cambio"
+  : "Pago inicial";
 
 // --- FORMULARIO REUTILIZABLE DE MÚLTIPLES MÉTODOS DE PAGO ---
 function useFormularioPagos() {
@@ -107,14 +125,19 @@ function SelectorPagos({
   auto,
   objetivoDolares,
   objetivoBs,
-  ocultarDivisa = false
+  pagadoDolares = 0,
+  tasa = 1,
+  ocultarMetodo = null
 }: {
   form: FormPagos;
   auto: boolean;
   objetivoDolares: number;
   objetivoBs: number;
-  ocultarDivisa?: boolean;
+  pagadoDolares?: number;
+  tasa?: number;
+  ocultarMetodo?: string | null;
 }) {
+  const porPagarDolares = Math.max(0, objetivoDolares - pagadoDolares);
   return (
     <div className="space-y-3">
       <div className="space-y-2">
@@ -147,7 +170,7 @@ function SelectorPagos({
                 <span className="text-sm font-black text-gray-900">
                   {m === "Divisas" ? `$${objetivoDolares.toFixed(2)}` : `${fmtBs(objetivoBs)} BS`}
                 </span>
-              ) : ocultarDivisa && m === "Divisas" ? (
+              ) : ocultarMetodo === m ? (
                 <span className="text-xs text-gray-400">Se calcula con el monto recibido</span>
               ) : (
                 <input
@@ -176,9 +199,25 @@ function SelectorPagos({
       </div>
 
       {form.metodos.length > 1 && (
-        <p className="text-[11px] text-gray-500">
-          Anota cuánto paga con cada método. Efectivo, Pago móvil y Transferencia se anotan en BS; Divisas en $.
-        </p>
+        <>
+          <p className="text-[11px] text-gray-500">
+            Anota cuánto paga con cada método. Efectivo, Pago móvil y Transferencia se anotan en BS; Divisas en $.
+          </p>
+          <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-1.5 text-xs">
+            <div className="flex justify-between gap-3">
+              <span className="font-bold text-gray-500 uppercase">Total a cubrir</span>
+              <span className="font-bold text-gray-800">${objetivoDolares.toFixed(2)} · {fmtBs(objetivoBs)} BS</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="font-bold text-gray-500 uppercase">Ya anotado</span>
+              <span className="font-bold text-emerald-700">${pagadoDolares.toFixed(2)} · {fmtBs(pagadoDolares * tasa)} BS</span>
+            </div>
+            <div className="flex justify-between gap-3 border-t border-gray-200 pt-1.5">
+              <span className="font-black text-gray-700 uppercase">Monto por pagar</span>
+              <span className="font-black text-amber-700">${porPagarDolares.toFixed(2)} · {fmtBs(porPagarDolares * tasa)} BS</span>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
@@ -212,11 +251,15 @@ export function FinancialDashboard(props: any) {
   // Estados para Devoluciones
   const [busquedaVentaDev, setBusquedaVentaDev] = useState("");
   const [modalDevolucionOpen, setModalDevolucionOpen] = useState(false);
-  const [ventaSeleccionadaDev, setVentaSeleccionadaDev] = useState<any>(null);
+  const [ventaDevId, setVentaDevId] = useState<string | null>(null);
+  const [indiceItemDev, setIndiceItemDev] = useState<number | null>(null);
+  const [cantidadDevolver, setCantidadDevolver] = useState("1");
   const [tipoDevolucion, setTipoDevolucion] = useState<"devolucion" | "cambio">("devolucion");
-  const [productoDevueltoItem, setProductoDevueltoItem] = useState<any>(null);
-  const [productoCambioSeleccionado, setProductoCambioSeleccionado] = useState<any>(null);
-  const [montoReembolso, setMontoReembolso] = useState("");
+  const [productoCambioId, setProductoCambioId] = useState("");
+  const [cantidadCambio, setCantidadCambio] = useState("1");
+  const [metodoLiq, setMetodoLiq] = useState("Efectivo");
+  const [montoLiqManual, setMontoLiqManual] = useState("");
+  const [refLiq, setRefLiq] = useState("");
   const [comisionDevolucion, setComisionDevolucion] = useState("");
 
   const [modalProductoOpen, setModalProductoOpen] = useState(false);
@@ -234,6 +277,7 @@ export function FinancialDashboard(props: any) {
   const [esPagoPendiente, setEsPagoPendiente] = useState(false);
   const [clienteNombre, setClienteNombre] = useState("");
   const [darVuelto, setDarVuelto] = useState(false);
+  const [metodoVuelto, setMetodoVuelto] = useState("Divisas");
   const [montoRecibido, setMontoRecibido] = useState("");
   const [filtroVentas, setFiltroVentas] = useState("dia");
 
@@ -409,8 +453,11 @@ export function FinancialDashboard(props: any) {
   // Convierte un monto (en la moneda nativa del método) a dólares
   const tasaBcvSegura = tasaBcv > 0 ? tasaBcv : 1;
   const aDolares = (metodo: string, monto: number) => (metodo === "Divisas" ? monto : monto / tasaBcvSegura);
+  // Texto "$X (Y BS)" para mensajes
+  const fmtDolaresYBs = (d: number) => `$${d.toFixed(2)} (${fmtBs(d * tasaBcvSegura)} BS)`;
 
-  // Arma la lista de pagos a partir de un formulario de métodos de pago
+  // Arma la lista de pagos a partir de un formulario de métodos de pago.
+  // "fijo" permite fijar el monto de un método (el que lleva vuelto) con lo que realmente se queda.
   const armarPagos = (
     form: { metodos: string[]; montos: Record<string, string>; refs: Record<string, string> },
     auto: boolean,
@@ -418,15 +465,15 @@ export function FinancialDashboard(props: any) {
     objetivoBs: number,
     tipo: string,
     fecha: string,
-    divisaFija: number | null = null
+    fijo: { metodo: string; monto: number; montoDolares: number } | null = null
   ) => {
     const lista: any[] = [];
     form.metodos.forEach((m) => {
       let monto = 0;
       let montoDolares = 0;
-      if (m === "Divisas" && divisaFija !== null) {
-        monto = divisaFija;
-        montoDolares = divisaFija;
+      if (fijo && m === fijo.metodo) {
+        monto = fijo.monto;
+        montoDolares = fijo.montoDolares;
       } else if (auto) {
         monto = m === "Divisas" ? objetivoDolares : objetivoBs;
         montoDolares = objetivoDolares;
@@ -495,7 +542,8 @@ export function FinancialDashboard(props: any) {
     }
   };
 
-  const eliminarProducto = async (id: string) => {
+  const eliminarProducto = async (id: string, nombre?: string) => {
+    if (!window.confirm(`¿Eliminar "${nombre || "este producto"}" del inventario? Esta acción no se puede deshacer.`)) return;
     try {
       await deleteDoc(doc(db, COLLECTION_INVENTARIO, id));
     } catch (e: any) {
@@ -539,22 +587,36 @@ export function FinancialDashboard(props: any) {
 
   // --- CÁLCULOS DE PAGO DE LA NUEVA VENTA ---
   const autoCompleto = pagoVenta.metodos.length === 1 && !esPagoPendiente;
-  const vueltoDisponible = pagoVenta.metodos.includes("Divisas") && !esPagoPendiente;
-  const vueltoActivo = darVuelto && vueltoDisponible;
 
-  // Lo que se paga con métodos distintos a Divisas (para saber cuánto debe cubrir la divisa)
+  // El vuelto se puede dar cuando se paga con Divisas ($) o con Efectivo (BS)
+  const metodosVuelto = pagoVenta.metodos.filter((m) => m === "Divisas" || m === "Efectivo");
+  const vueltoDisponible = metodosVuelto.length > 0 && !esPagoPendiente;
+  const vueltoActivo = darVuelto && vueltoDisponible;
+  const metodoVueltoSel = metodosVuelto.includes(metodoVuelto) ? metodoVuelto : (metodosVuelto[0] || "Divisas");
+
+  // Lo que se paga con los demás métodos (para saber cuánto debe cubrir el método con vuelto)
   const pagosOtros = armarPagos(
-    { ...pagoVenta, metodos: pagoVenta.metodos.filter((m) => m !== "Divisas") },
-    autoCompleto, totalVentaDolares, totalVentaBs, "venta", ""
+    { ...pagoVenta, metodos: pagoVenta.metodos.filter((m) => m !== metodoVueltoSel) },
+    false, totalVentaDolares, totalVentaBs, "venta", ""
   );
-  const restanteDivisa = vueltoActivo ? Math.max(0, totalVentaDolares - sumaDolares(pagosOtros)) : 0;
+  const restanteDolares = vueltoActivo ? Math.max(0, totalVentaDolares - sumaDolares(pagosOtros)) : 0;
+  const restanteBsVuelto = vueltoActivo
+    ? (pagosOtros.length === 0 ? totalVentaBs : restanteDolares * tasaBcv)
+    : 0;
+  const restanteMetodo = metodoVueltoSel === "Divisas" ? restanteDolares : restanteBsVuelto;
   const recibidoNum = parseFloat(montoRecibido) || 0;
-  const vueltoDolares = vueltoActivo ? Math.max(0, recibidoNum - restanteDivisa) : 0;
-  const vueltoBsBcv = vueltoDolares * tasaBcv;
+  const recibidoDolares = aDolares(metodoVueltoSel, recibidoNum);
+  const vueltoMetodo = vueltoActivo ? Math.max(0, recibidoNum - restanteMetodo) : 0; // en la moneda del método
+  const vueltoDolares = aDolares(metodoVueltoSel, vueltoMetodo);
+  const vueltoBsBcv = metodoVueltoSel === "Divisas" ? vueltoDolares * tasaBcv : vueltoMetodo;
   const vueltoBsDivisa = vueltoDolares * tasaDivisa;
 
+  const pagoFijoVuelto = vueltoActivo
+    ? { metodo: metodoVueltoSel, monto: restanteMetodo, montoDolares: restanteDolares }
+    : null;
+
   const pagosVentaPreview = armarPagos(
-    pagoVenta, autoCompleto, totalVentaDolares, totalVentaBs, "venta", "", vueltoActivo ? restanteDivisa : null
+    pagoVenta, autoCompleto, totalVentaDolares, totalVentaBs, "venta", "", pagoFijoVuelto
   );
   const pagadoVentaDolares = sumaDolares(pagosVentaPreview);
   const pendienteVentaDolares = Math.max(0, totalVentaDolares - pagadoVentaDolares);
@@ -569,12 +631,11 @@ export function FinancialDashboard(props: any) {
       if (totalVentaDolares - pagadoVentaDolares <= TOLERANCIA) return "En un pago pendiente, el monto pagado debe ser menor al total.";
       return null;
     }
-    if (vueltoActivo && recibidoNum < restanteDivisa - TOLERANCIA) {
-      return "El monto recibido en divisa es menor a lo que falta por pagar.";
+    if (vueltoActivo && recibidoDolares < restanteDolares - TOLERANCIA) {
+      return "El monto recibido es menor a lo que falta por pagar.";
     }
     if (pagadoVentaDolares < totalVentaDolares - TOLERANCIA) {
-      return `Faltan $${(totalVentaDolares - pagadoVentaDolares).toFixed(2)} por cubrir.`;
-      return `Faltan $${(montoPendienteDolares * tasaBcv).toFixed(2)} por cubrir.`;
+      return `Faltan ${fmtDolaresYBs(totalVentaDolares - pagadoVentaDolares)} por cubrir.`;
     }
     return null;
   };
@@ -585,17 +646,9 @@ export function FinancialDashboard(props: any) {
 
     setGuardandoVenta(true);
     try {
-      for (let item of carrito) {
-        const prodActual = products.find(p => p.id === item.id);
-        if (prodActual) {
-          const nuevaCant = Math.max(0, prodActual.cantidad - item.qty);
-          await updateDoc(doc(db, COLLECTION_INVENTARIO, item.id), { cantidad: nuevaCant });
-        }
-      }
-
       const fecha = new Date().toISOString();
       const pagos = armarPagos(
-        pagoVenta, autoCompleto, totalVentaDolares, totalVentaBs, "venta", fecha, vueltoActivo ? restanteDivisa : null
+        pagoVenta, autoCompleto, totalVentaDolares, totalVentaBs, "venta", fecha, pagoFijoVuelto
       );
       const montoPendiente = esPagoPendiente
         ? Number(Math.max(0, totalVentaDolares - sumaDolares(pagos)).toFixed(2))
@@ -614,6 +667,7 @@ export function FinancialDashboard(props: any) {
         montoPendiente,
         vuelto: vueltoActivo && vueltoDolares > 0
           ? {
+              metodo: metodoVueltoSel,
               recibido: Number(recibidoNum.toFixed(2)),
               dolares: Number(vueltoDolares.toFixed(2)),
               bsBcv: Number(vueltoBsBcv.toFixed(2)),
@@ -622,7 +676,15 @@ export function FinancialDashboard(props: any) {
           : null
       };
 
-      await addDoc(collection(db, COLLECTION_VENTAS), nuevaVenta);
+      // Todo en un solo lote: o se guarda la venta y se descuenta el stock, o no se guarda nada
+      const batch = writeBatch(db);
+      carrito.forEach((item) => {
+        if (products.some((p) => p.id === item.id)) {
+          batch.update(doc(db, COLLECTION_INVENTARIO, item.id), { cantidad: increment(-item.qty) });
+        }
+      });
+      batch.set(doc(collection(db, COLLECTION_VENTAS)), nuevaVenta);
+      await batch.commit();
 
       setCarrito([]);
       pagoVenta.reset();
@@ -712,13 +774,13 @@ export function FinancialDashboard(props: any) {
   const pagosFinalPreview = ventaPendienteActual
     ? armarPagos(pagoFinal, autoFinal, debeDolares, debeBs, "final", "")
     : [];
+  const pagadoFinalDolares = sumaDolares(pagosFinalPreview);
   const validarFinal = (): string | null => {
     if (!ventaPendienteActual) return "Venta no encontrada.";
     if (pagosFinalPreview.some((p) => necesitaReferencia(p.metodo) && p.referencia.length !== 4)) {
       return "Ingresa los 4 últimos dígitos de la referencia.";
     }
-    const pagado = sumaDolares(pagosFinalPreview);
-    if (pagado < debeDolares - TOLERANCIA) return `Faltan $${(debeDolares - pagado).toFixed(2)} por cubrir.`;
+    if (pagadoFinalDolares < debeDolares - TOLERANCIA) return `Faltan ${fmtDolaresYBs(debeDolares - pagadoFinalDolares)} por cubrir.`;
     return null;
   };
   const errorFinal = validarFinal();
@@ -748,91 +810,190 @@ export function FinancialDashboard(props: any) {
     }
   };
 
+  // --- DEVOLUCIONES Y CAMBIOS ---
+  const ventaDev = sales.find((s: any) => s.id === ventaDevId) || null;
+  const itemDev = ventaDev && indiceItemDev !== null ? (ventaDev.items[indiceItemDev] || null) : null;
+  const productoCambio = products.find((p) => p.id === productoCambioId) || null;
+  const qtyDevNum = itemDev ? Math.min(itemDev.qty, Math.max(0, parseInt(cantidadDevolver) || 0)) : 0;
+  const qtyCambioNum = Math.max(0, parseInt(cantidadCambio) || 0);
+
+  // Stock disponible del producto nuevo (si es el mismo que se devuelve, también cuenta lo que vuelve)
+  const stockDisponibleCambio = productoCambio
+    ? productoCambio.cantidad + (itemDev && productoCambio.id === itemDev.id ? qtyDevNum : 0)
+    : 0;
+
+  // Resultado de la operación: nuevos ítems, nuevos totales y saldo entre cliente y negocio
+  const calcDev = (() => {
+    if (!ventaDev || !itemDev || qtyDevNum < 1) return null;
+    const itemsRestantes = ventaDev.items.flatMap((it: any, i: number) => {
+      if (i !== indiceItemDev) return [it];
+      return it.qty - qtyDevNum > 0 ? [{ ...it, qty: it.qty - qtyDevNum }] : [];
+    });
+    let itemsFinales = itemsRestantes;
+    let itemNuevo: any = null;
+    if (tipoDevolucion === "cambio" && productoCambio && qtyCambioNum > 0) {
+      const c = calcularPrecios(productoCambio.pCompra);
+      itemNuevo = { ...productoCambio, pVenta: c.pVenta, pFinalBs: c.pFinalBs, qty: qtyCambioNum };
+      itemsFinales = [...itemsRestantes, itemNuevo];
+    }
+    const nuevoTotalDolares = redondear(itemsFinales.reduce((a: number, i: any) => a + i.pVenta * i.qty, 0));
+    const nuevoTotalBs = redondear(itemsFinales.reduce((a: number, i: any) => a + i.pFinalBs * i.qty, 0));
+    const pagadoPrevio = sumaDolares(obtenerPagosVenta(ventaDev));
+    // saldo > 0: el cliente debe pagar. saldo < 0: el negocio debe devolver dinero.
+    const saldo = redondear(nuevoTotalDolares - pagadoPrevio);
+    return {
+      itemsFinales,
+      itemNuevo,
+      nuevoTotalDolares,
+      nuevoTotalBs,
+      saldo,
+      valorDevueltoDolares: redondear(itemDev.pVenta * qtyDevNum),
+      valorNuevoDolares: itemNuevo ? redondear(itemNuevo.pVenta * itemNuevo.qty) : 0
+    };
+  })();
+
+  const saldoDev = calcDev ? calcDev.saldo : 0;
+  const esVentaPendienteDev = !!(ventaDev && ventaDev.pendiente);
+  // Si el cliente debe pagar y la venta ya era pendiente, simplemente aumenta lo que debe (no se cobra ahora)
+  const liquidaAhora = !!calcDev && (saldoDev < -TOLERANCIA || (saldoDev > TOLERANCIA && !esVentaPendienteDev));
+  const liqAutoMonto = liquidaAhora
+    ? (metodoLiq === "Divisas" ? Math.abs(saldoDev) : Math.abs(saldoDev) * tasaBcvSegura)
+    : 0;
+  const liqMontoNum = montoLiqManual !== "" ? (parseFloat(montoLiqManual) || 0) : liqAutoMonto;
+  const liqDolares = aDolares(metodoLiq, liqMontoNum);
+
+  const validarDevolucion = (): string | null => {
+    if (!ventaDev || !itemDev) return "Selecciona la venta y el producto.";
+    if (qtyDevNum < 1 || qtyDevNum > itemDev.qty) return `La cantidad a devolver debe estar entre 1 y ${itemDev.qty}.`;
+    if (tipoDevolucion === "cambio") {
+      if (!productoCambio) return "Selecciona el producto de reemplazo.";
+      if (qtyCambioNum < 1) return "Indica la cantidad del producto nuevo.";
+      if (qtyCambioNum > stockDisponibleCambio) return "No hay suficiente stock del producto nuevo.";
+    }
+    if (liquidaAhora) {
+      if (liqMontoNum <= 0) return saldoDev < 0 ? "Indica el monto a entregar al cliente." : "Indica el monto que paga el cliente.";
+      if (necesitaReferencia(metodoLiq) && refLiq.length !== 4) return "Ingresa los 4 últimos dígitos de la referencia.";
+      if (saldoDev > 0 && liqDolares < saldoDev - TOLERANCIA) return `El cliente debe pagar ${fmtDolaresYBs(saldoDev)}.`;
+      if (saldoDev < 0 && liqDolares > -saldoDev + TOLERANCIA) return `No puedes entregar más de ${fmtDolaresYBs(-saldoDev)}.`;
+    }
+    return null;
+  };
+  const errorDevolucion = validarDevolucion();
+
+  const cerrarModalDevolucion = () => {
+    setModalDevolucionOpen(false);
+    setBusquedaVentaDev("");
+    setVentaDevId(null);
+    setIndiceItemDev(null);
+    setCantidadDevolver("1");
+    setTipoDevolucion("devolucion");
+    setProductoCambioId("");
+    setCantidadCambio("1");
+    setMetodoLiq("Efectivo");
+    setMontoLiqManual("");
+    setRefLiq("");
+    setComisionDevolucion("");
+  };
+
+  const cambiarCantidadDevolver = (delta: number) => {
+    if (!itemDev) return;
+    const n = Math.min(itemDev.qty, Math.max(1, (qtyDevNum || 1) + delta));
+    setCantidadDevolver(String(n));
+    setMontoLiqManual("");
+  };
+
+  const cambiarCantidadCambio = (delta: number) => {
+    const n = Math.max(1, Math.min(stockDisponibleCambio || 1, (qtyCambioNum || 1) + delta));
+    setCantidadCambio(String(n));
+    setMontoLiqManual("");
+  };
+
   const procesarDevolucionOCambio = async () => {
-    if (!ventaSeleccionadaDev || !productoDevueltoItem || guardandoDevolucionState) return;
+    if (guardandoDevolucionState || validarDevolucion() || !ventaDev || !itemDev || !calcDev) return;
     setGuardandoDevolucionState(true);
 
     try {
-      const prodInv = products.find(p => p.id === productoDevueltoItem.id);
-      if (prodInv) {
-        const nuevaCant = prodInv.cantidad + productoDevueltoItem.qty;
-        await updateDoc(doc(db, COLLECTION_INVENTARIO, productoDevueltoItem.id), { cantidad: nuevaCant });
+      const fecha = new Date().toISOString();
+      const batch = writeBatch(db);
+
+      // Stock: vuelve lo devuelto y sale lo entregado en el cambio
+      if (products.some((p) => p.id === itemDev.id)) {
+        batch.update(doc(db, COLLECTION_INVENTARIO, itemDev.id), { cantidad: increment(qtyDevNum) });
+      }
+      if (tipoDevolucion === "cambio" && productoCambio && calcDev.itemNuevo) {
+        batch.update(doc(db, COLLECTION_INVENTARIO, productoCambio.id), { cantidad: increment(-qtyCambioNum) });
       }
 
-      let detalleOperacion = "";
-
-      if (tipoDevolucion === "devolucion") {
-        if (ventaSeleccionadaDev.items.length === 1) {
-          await deleteDoc(doc(db, COLLECTION_VENTAS, ventaSeleccionadaDev.id));
-          detalleOperacion = "Devolución total (Venta eliminada)";
-        } else {
-          const nuevosItems = ventaSeleccionadaDev.items.filter((i: any) => i.id !== productoDevueltoItem.id);
-          const nuevoTotalDolar = nuevosItems.reduce((acc: number, i: any) => acc + (i.pVenta * i.qty), 0);
-          const nuevoTotalBs = nuevosItems.reduce((acc: number, i: any) => acc + (i.pFinalBs * i.qty), 0);
-
-          await updateDoc(doc(db, COLLECTION_VENTAS, ventaSeleccionadaDev.id), {
-            items: nuevosItems,
-            totalDolares: nuevoTotalDolar,
-            totalBs: nuevoTotalBs
-          });
-          detalleOperacion = "Devolución parcial de producto";
-        }
-      } else {
-        if (!productoCambioSeleccionado) {
-          setGuardandoDevolucionState(false);
-          return;
-        }
-
-        const prodNuevoInv = products.find(p => p.id === productoCambioSeleccionado.id);
-        if (!prodNuevoInv || prodNuevoInv.cantidad < 1) {
-          setGuardandoDevolucionState(false);
-          return;
-        }
-        await updateDoc(doc(db, COLLECTION_INVENTARIO, productoCambioSeleccionado.id), { 
-          cantidad: prodNuevoInv.cantidad - 1 
-        });
-
-        const calcNuevo = calcularPrecios(productoCambioSeleccionado.pCompra);
-        const itemNuevoObj = {
-          ...productoCambioSeleccionado,
-          pVenta: calcNuevo.pVenta,
-          pFinalBs: calcNuevo.pFinalBs,
-          qty: 1
+      // Pagos: si hay dinero que entregar o cobrar, queda registrado dentro de la venta
+      let pagos = obtenerPagosVenta(ventaDev);
+      let liquidacion: any = null;
+      if (liquidaAhora) {
+        const signo = saldoDev < 0 ? -1 : 1;
+        const pagoLiq = {
+          fecha,
+          tipo: saldoDev < 0 ? "devolucion" : "cambio",
+          metodo: metodoLiq,
+          monto: signo * redondear(liqMontoNum),
+          montoDolares: signo * redondear(liqDolares),
+          referencia: necesitaReferencia(metodoLiq) ? refLiq : ""
         };
-
-        const otrosItems = ventaSeleccionadaDev.items.filter((i: any) => i.id !== productoDevueltoItem.id);
-        const itemsActualizados = [...otrosItems, itemNuevoObj];
-
-        const nuevoTotalDolar = itemsActualizados.reduce((acc: number, i: any) => acc + (i.pVenta * i.qty), 0);
-        const nuevoTotalBs = itemsActualizados.reduce((acc: number, i: any) => acc + (i.pFinalBs * i.qty), 0);
-
-        await updateDoc(doc(db, COLLECTION_VENTAS, ventaSeleccionadaDev.id), {
-          items: itemsActualizados,
-          totalDolares: nuevoTotalDolar,
-          totalBs: nuevoTotalBs
-        });
-        detalleOperacion = `Cambio de [${productoDevueltoItem.nombre}] por [${productoCambioSeleccionado.nombre}]`;
+        pagos = [...pagos, pagoLiq];
+        liquidacion = {
+          sentido: saldoDev < 0 ? "entregar" : "cobrar",
+          metodo: metodoLiq,
+          monto: redondear(liqMontoNum),
+          montoDolares: redondear(liqDolares),
+          montoBs: metodoLiq === "Divisas" ? redondear(liqDolares * tasaBcvSegura) : redondear(liqMontoNum)
+        };
       }
 
-      const registroDev = {
-        fecha: new Date().toISOString(),
-        ventaId: ventaSeleccionadaDev.id,
+      // Estado de pendiente de la venta
+      let pendiente = !!ventaDev.pendiente;
+      let montoPendiente = ventaDev.montoPendiente || 0;
+      if (ventaDev.pendiente) {
+        if (saldoDev > TOLERANCIA) {
+          montoPendiente = saldoDev;
+        } else {
+          pendiente = false;
+          montoPendiente = 0;
+        }
+      }
+
+      const ventaAnulada = calcDev.itemsFinales.length === 0;
+      batch.update(doc(db, COLLECTION_VENTAS, ventaDev.id), {
+        items: calcDev.itemsFinales,
+        totalDolares: calcDev.nuevoTotalDolares,
+        totalBs: calcDev.nuevoTotalBs,
+        pagos,
+        metodoPago: resumenMetodos(pagos) || (ventaAnulada ? "Devuelta" : "Pendiente"),
+        referencia: resumenReferencias(pagos),
+        pendiente,
+        montoPendiente,
+        devuelta: ventaAnulada
+      });
+
+      const detalleOperacion =
+        tipoDevolucion === "devolucion"
+          ? (ventaAnulada ? `Devolución de ${qtyDevNum}x ${itemDev.nombre} (venta devuelta por completo)` : `Devolución parcial de ${qtyDevNum}x ${itemDev.nombre}`)
+          : `Cambio de ${qtyDevNum}x [${itemDev.nombre}] por ${qtyCambioNum}x [${productoCambio?.nombre}]`;
+
+      batch.set(doc(collection(db, COLLECTION_DEVOLUCIONES)), {
+        fecha,
+        ventaId: ventaDev.id,
         tipo: tipoDevolucion,
         detalle: detalleOperacion,
-        productoDevuelto: productoDevueltoItem.nombre,
-        productoNuevo: productoCambioSeleccionado ? productoCambioSeleccionado.nombre : "N/A",
-        montoReembolsoBs: parseFloat(montoReembolso) || 0,
+        productoDevuelto: itemDev.nombre,
+        cantidadDevuelta: qtyDevNum,
+        productoNuevo: productoCambio && tipoDevolucion === "cambio" ? productoCambio.nombre : "N/A",
+        cantidadNueva: tipoDevolucion === "cambio" ? qtyCambioNum : 0,
+        diferenciaDolares: saldoDev,
+        liquidacion,
+        montoReembolsoBs: liquidacion && liquidacion.sentido === "entregar" ? liquidacion.montoBs : 0,
         comision: comisionDevolucion || "Sin comisión"
-      };
+      });
 
-      await addDoc(collection(db, COLLECTION_DEVOLUCIONES), registroDev);
-
-      setModalDevolucionOpen(false);
-      setVentaSeleccionadaDev(null);
-      setProductoDevueltoItem(null);
-      setProductoCambioSeleccionado(null);
-      setMontoReembolso("");
-      setComisionDevolucion("");
+      await batch.commit();
+      cerrarModalDevolucion();
     } catch (e: any) {
       console.error("Error al procesar devolución:", e);
     } finally {
@@ -840,20 +1001,23 @@ export function FinancialDashboard(props: any) {
     }
   };
 
-  const ventasFiltradas = sales.filter((sale: any) => {
-    const fechaVenta = new Date(sale.fecha);
+  // --- FILTRO DE PERIODO (lista de ventas y reporte) ---
+  const dentroDelFiltro = (fechaIso: string) => {
+    const f = new Date(fechaIso);
     const ahora = new Date();
     if (filtroVentas === "dia") {
-      return fechaVenta.toDateString() === ahora.toDateString();
+      return f.toDateString() === ahora.toDateString();
     } else if (filtroVentas === "semana") {
       const unaSemanaAtras = new Date();
       unaSemanaAtras.setDate(ahora.getDate() - 7);
-      return fechaVenta >= unaSemanaAtras;
+      return f >= unaSemanaAtras;
     } else if (filtroVentas === "mes") {
-      return fechaVenta.getMonth() === ahora.getMonth() && fechaVenta.getFullYear() === ahora.getFullYear();
+      return f.getMonth() === ahora.getMonth() && f.getFullYear() === ahora.getFullYear();
     }
     return true;
-  });
+  };
+
+  const ventasFiltradas = sales.filter((sale: any) => dentroDelFiltro(sale.fecha));
 
   const productosFiltradosInventario = products
     .filter(p => 
@@ -867,42 +1031,40 @@ export function FinancialDashboard(props: any) {
     .filter(p => Number(p.cantidad) <= 5)
     .sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" }));
 
-  // --- REPORTE DE VENTAS CON DEVOLUCIONES RESTADAS ---
+  // --- REPORTE DE VENTAS (sigue el filtro Día / Semana / Mes) ---
   const generarReportePDF = () => {
-    const hoyStr = new Date().toDateString();
-    const ventasDelDia = sales.filter((sale: any) => new Date(sale.fecha).toDateString() === hoyStr);
-    const devDelDia = devoluciones.filter((dev: any) => new Date(dev.fecha).toDateString() === hoyStr);
+    const etiquetaPeriodo = filtroVentas === "dia" ? "Diario" : filtroVentas === "semana" ? "de los Últimos 7 Días" : "Mensual";
 
-    // Dinero realmente cobrado hoy (incluye abonos y pagos finalizados de ventas anteriores)
-    const pagosDelDia = sales
+    const ventasPeriodo = sales.filter((sale: any) => dentroDelFiltro(sale.fecha));
+    const devPeriodo = devoluciones.filter((dev: any) => dentroDelFiltro(dev.fecha));
+
+    // Dinero realmente movido en el periodo (incluye abonos, pagos finales y reembolsos como negativos)
+    const pagosPeriodo = sales
       .flatMap((s: any) => obtenerPagosVenta(s))
-      .filter((p: any) => new Date(p.fecha).toDateString() === hoyStr);
+      .filter((p: any) => dentroDelFiltro(p.fecha));
 
     let efectivoBs = 0;
     let divisaDolar = 0;
     let pagoMovilBs = 0;
     let transferenciaBs = 0;
 
-    pagosDelDia.forEach((p: any) => {
+    pagosPeriodo.forEach((p: any) => {
       if (p.metodo === "Efectivo") efectivoBs += p.monto;
       else if (p.metodo === "Divisas") divisaDolar += p.monto;
       else if (p.metodo === "Pago movil") pagoMovilBs += p.monto;
       else if (p.metodo === "Transferencia") transferenciaBs += p.monto;
     });
 
-    const totalCobradoDolar = sumaDolares(pagosDelDia);
+    const totalCobradoDolar = sumaDolares(pagosPeriodo);
+    const reembolsosDolar = Math.abs(sumaDolares(pagosPeriodo.filter((p: any) => p.monto < 0)));
     const totalPorCobrarDolar = ventasPendientes.reduce((acc: number, s: any) => acc + (s.montoPendiente || 0), 0);
 
-    let totalDolarDia = ventasDelDia.reduce((acc, s) => acc + s.totalDolares, 0);
-    let totalBsDia = ventasDelDia.reduce((acc, s) => acc + s.totalBs, 0);
+    // Los totales de cada venta ya vienen ajustados por devoluciones y cambios
+    const totalDolarPeriodo = ventasPeriodo.reduce((acc, s) => acc + s.totalDolares, 0);
+    const totalBsPeriodo = ventasPeriodo.reduce((acc, s) => acc + s.totalBs, 0);
 
-    // Calcular total devuelto en el día
-    let totalDevueltoBs = devDelDia.reduce((acc, d) => acc + (d.montoReembolsoBs || 0), 0);
-    let totalDevueltoDolar = totalDevueltoBs / (tasaBcv > 0 ? tasaBcv : 1);
-
-    // Restar devoluciones a los totales de ganancia del día
-    totalDolarDia = Math.max(0, totalDolarDia - totalDevueltoDolar);
-    totalBsDia = Math.max(0, totalBsDia - totalDevueltoBs);
+    const totalDevueltoBs = devPeriodo.reduce((acc, d) => acc + (d.montoReembolsoBs || 0), 0);
+    const totalDevueltoDolar = totalDevueltoBs / tasaBcvSegura;
 
     const ventanaReporte = window.open("", "_blank");
     if (!ventanaReporte) return;
@@ -946,7 +1108,7 @@ export function FinancialDashboard(props: any) {
         </head>
         <body>
           <h2>MOTO PARTES PIRUETA</h2>
-          <p class="subtitle">Reporte Diario de Ventas (Neto con Devoluciones)</p>
+          <p class="subtitle">Reporte ${etiquetaPeriodo} de Ventas (Neto con Devoluciones)</p>
           <div class="info">
             <strong>Fecha del reporte:</strong> ${new Date().toLocaleDateString()} <br>
             <strong>Tasa BCV aplicada:</strong> ${fmtBs(tasaBcv)} BS <br>
@@ -955,7 +1117,7 @@ export function FinancialDashboard(props: any) {
           <table>
             <thead>
               <tr>
-                <th>ID / Hora</th>
+                <th>Fecha / Hora</th>
                 <th>Método de Pago</th>
                 <th>Ref.</th>
                 <th>Productos Vendidos</th>
@@ -964,12 +1126,12 @@ export function FinancialDashboard(props: any) {
               </tr>
             </thead>
             <tbody>
-              ${ventasDelDia.map(s => `
+              ${ventasPeriodo.map(s => `
                 <tr>
-                  <td>${new Date(s.fecha).toLocaleTimeString()}</td>
+                  <td>${filtroVentas === "dia" ? new Date(s.fecha).toLocaleTimeString() : new Date(s.fecha).toLocaleString()}</td>
                   <td>${escapeHtml(s.metodoPago)}${s.pendiente ? `<br><strong style="color:#b45309;">&#9888; Pendiente: ${escapeHtml(s.cliente)} (debe $${(s.montoPendiente || 0).toFixed(2)})</strong>` : ""}</td>
                   <td>${escapeHtml(s.referencia) || "N/A"}</td>
-                  <td>${s.items.map((i: any) => `${i.qty}x ${escapeHtml(i.nombre)}`).join(", ")}</td>
+                  <td>${s.items.length > 0 ? s.items.map((i: any) => `${i.qty}x ${escapeHtml(i.nombre)}`).join(", ") : "<em>Venta devuelta por completo</em>"}</td>
                   <td class="num">$${s.totalDolares.toFixed(2)}</td>
                   <td class="num">${fmtBs(s.totalBs)} BS</td>
                 </tr>
@@ -978,13 +1140,13 @@ export function FinancialDashboard(props: any) {
           </table>
 
           <div class="dev-box">
-            <h3 style="margin: 0 0 8px 0; color: #b45309; font-size: 15px;">Resumen de Devoluciones del Día</h3>
-            <p style="margin: 4px 0; font-size: 13px;">Cantidad de devoluciones/cambios: <strong>${devDelDia.length}</strong></p>
-            <p style="margin: 4px 0; font-size: 13px;">Monto total devuelto: <strong>$${totalDevueltoDolar.toFixed(2)} (${fmtBs(totalDevueltoBs)} BS)</strong></p>
+            <h3 style="margin: 0 0 8px 0; color: #b45309; font-size: 15px;">Resumen de Devoluciones del Periodo</h3>
+            <p style="margin: 4px 0; font-size: 13px;">Cantidad de devoluciones/cambios: <strong>${devPeriodo.length}</strong></p>
+            <p style="margin: 4px 0; font-size: 13px;">Monto total reembolsado: <strong>$${totalDevueltoDolar.toFixed(2)} (${fmtBs(totalDevueltoBs)} BS)</strong></p>
           </div>
 
           <div class="totales-box">
-            <h3>Dinero cobrado hoy por método</h3>
+            <h3>Dinero cobrado por método (neto de reembolsos)</h3>
             <div class="totales-grid">
               <div><span>Efectivo (Bolívares):</span> <strong>${fmtBs(efectivoBs)} BS</strong></div>
               <div><span>Divisa (Dólares):</span> <strong>$${divisaDolar.toFixed(2)}</strong></div>
@@ -992,9 +1154,10 @@ export function FinancialDashboard(props: any) {
               <div><span>Transferencia (BS):</span> <strong>${fmtBs(transferenciaBs)} BS</strong></div>
             </div>
             <div class="total-final">
-              <p>Total cobrado hoy ($ equivalente): $${totalCobradoDolar.toFixed(2)}</p>
-              <p>Total Neto Vendido del Día ($): $${totalDolarDia.toFixed(2)}</p>
-              <p>Total Neto Vendido del Día (BS): ${fmtBs(totalBsDia)} BS</p>
+              <p>Total cobrado ($ equivalente): $${totalCobradoDolar.toFixed(2)}</p>
+              <p>Reembolsos entregados en el periodo ($ equivalente): $${reembolsosDolar.toFixed(2)}</p>
+              <p>Total Neto Vendido ($): $${totalDolarPeriodo.toFixed(2)}</p>
+              <p>Total Neto Vendido (BS): ${fmtBs(totalBsPeriodo)} BS</p>
               <p style="color:#b45309;">Pendiente por cobrar (todos los clientes): $${totalPorCobrarDolar.toFixed(2)}</p>
             </div>
           </div>
@@ -1328,7 +1491,7 @@ export function FinancialDashboard(props: any) {
                   >
                     <div>
                       <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Ventas registradas</p>
-                      <p className="text-3xl font-black text-gray-900 mt-2">{sales?.length || 0}</p>
+                      <p className="text-3xl font-black text-gray-900 mt-2">{sales.filter((s: any) => !s.devuelta).length}</p>
                     </div>
                     <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl">
                       <CreditCard className="w-7 h-7" />
@@ -1360,7 +1523,7 @@ export function FinancialDashboard(props: any) {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white rounded-2xl border border-gray-200 p-6 shadow-sm gap-4">
                 <div>
                   <h3 className="text-lg font-bold text-gray-900">Historial y Registro de Ventas</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Filtra las ventas y genera reportes imprimibles.</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Filtra las ventas y genera reportes imprimibles (el reporte sigue el filtro elegido).</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
                   <div className="flex bg-gray-100 p-1 rounded-xl">
@@ -1411,16 +1574,24 @@ export function FinancialDashboard(props: any) {
                                 Pendiente
                               </span>
                             )}
+                            {sale.devuelta && (
+                              <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-1 bg-gray-100 text-gray-700 rounded-lg">
+                                <RotateCcw className="w-3.5 h-3.5" />
+                                Devuelta
+                              </span>
+                            )}
                           </div>
                           <p className="text-xs text-gray-400 mt-2">{new Date(sale.fecha).toLocaleString()} (ID: {sale.id.slice(0, 8)})</p>
                           {Array.isArray(sale.pagos) && sale.pagos.length > 1 && (
                             <p className="text-[11px] text-gray-500 mt-1">
-                              {sale.pagos.map((p: any) => `${p.metodo}: ${p.metodo === "Divisas" ? "$" + p.monto.toFixed(2) : fmtBs(p.monto) + " BS"}`).join(" · ")}
+                              {sale.pagos.map((p: any) => `${p.metodo}: ${fmtPago(p)}`).join(" · ")}
                             </p>
                           )}
                           {sale.vuelto && (
                             <p className="text-[11px] text-gray-500 mt-1">
-                              Vuelto entregado: ${sale.vuelto.dolares.toFixed(2)} ({fmtBs(sale.vuelto.bsBcv)} BS BCV / {fmtBs(sale.vuelto.bsDivisa)} BS divisa)
+                              {sale.vuelto.metodo === "Efectivo"
+                                ? `Vuelto entregado en efectivo: ${fmtBs(sale.vuelto.bsBcv)} BS (≈ $${sale.vuelto.dolares.toFixed(2)})`
+                                : `Vuelto entregado: $${sale.vuelto.dolares.toFixed(2)} (${fmtBs(sale.vuelto.bsBcv)} BS BCV / ${fmtBs(sale.vuelto.bsDivisa)} BS divisa)`}
                             </p>
                           )}
                         </div>
@@ -1432,14 +1603,18 @@ export function FinancialDashboard(props: any) {
 
                       <div className="space-y-2">
                         <p className="text-xs font-bold text-gray-500 uppercase">Productos vendidos:</p>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {sale.items.map((item: any, idx: number) => (
-                            <div key={idx} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-xl text-xs">
-                              <span className="font-bold text-gray-800">{item.qty}x {item.nombre}</span>
-                              <span className="text-gray-600">${(item.pVenta * item.qty).toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
+                        {sale.items.length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {sale.items.map((item: any, idx: number) => (
+                              <div key={idx} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-xl text-xs">
+                                <span className="font-bold text-gray-800">{item.qty}x {item.nombre}</span>
+                                <span className="text-gray-600">${(item.pVenta * item.qty).toFixed(2)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-gray-400">Todos los productos de esta venta fueron devueltos.</p>
+                        )}
                       </div>
                     </div>
                   ))
@@ -1533,14 +1708,36 @@ export function FinancialDashboard(props: any) {
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-sm font-black text-amber-700">Reembolso: {fmtBs(dev.montoReembolsoBs || 0)} BS</p>
+                          {dev.liquidacion && dev.liquidacion.sentido === "cobrar" ? (
+                            <p className="text-sm font-black text-emerald-700">
+                              Cobrado al cliente: {dev.liquidacion.metodo === "Divisas" ? `$${dev.liquidacion.monto.toFixed(2)}` : `${fmtBs(dev.liquidacion.monto)} BS`}
+                            </p>
+                          ) : (
+                            <p className="text-sm font-black text-amber-700">Reembolso: {fmtBs(dev.montoReembolsoBs || 0)} BS</p>
+                          )}
                           <p className="text-xs text-gray-500 font-medium">Comisión: {dev.comision || "N/A"}</p>
                         </div>
                       </div>
                       <div className="text-xs space-y-1 text-gray-700">
                         <p><strong>Detalle:</strong> {dev.detalle}</p>
-                        <p><strong>Producto devuelto:</strong> {dev.productoDevuelto}</p>
-                        {dev.tipo === "cambio" && <p><strong>Producto de cambio:</strong> {dev.productoNuevo}</p>}
+                        <p><strong>Producto devuelto:</strong> {dev.cantidadDevuelta ? `${dev.cantidadDevuelta}x ` : ""}{dev.productoDevuelto}</p>
+                        {dev.tipo === "cambio" && <p><strong>Producto de cambio:</strong> {dev.cantidadNueva ? `${dev.cantidadNueva}x ` : ""}{dev.productoNuevo}</p>}
+                        {typeof dev.diferenciaDolares === "number" && dev.tipo === "cambio" && (
+                          <p>
+                            <strong>Diferencia:</strong>{" "}
+                            {Math.abs(dev.diferenciaDolares) <= TOLERANCIA
+                              ? "Sin diferencia"
+                              : dev.diferenciaDolares > 0
+                                ? `El cliente debía pagar $${dev.diferenciaDolares.toFixed(2)}`
+                                : `Se debía devolver al cliente $${Math.abs(dev.diferenciaDolares).toFixed(2)}`}
+                          </p>
+                        )}
+                        {dev.liquidacion && (
+                          <p>
+                            <strong>{dev.liquidacion.sentido === "entregar" ? "Entregado al cliente:" : "Cobrado al cliente:"}</strong>{" "}
+                            {dev.liquidacion.metodo === "Divisas" ? `$${dev.liquidacion.monto.toFixed(2)}` : `${fmtBs(dev.liquidacion.monto)} BS`} ({dev.liquidacion.metodo})
+                          </p>
+                        )}
                       </div>
                     </div>
                   ))
@@ -1617,7 +1814,7 @@ export function FinancialDashboard(props: any) {
                                   <Edit className="w-4 h-4" />
                                 </button>
                                 <button 
-                                  onClick={() => eliminarProducto(prod.id)} 
+                                  onClick={() => eliminarProducto(prod.id, prod.nombre)} 
                                   className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
                                   title="Eliminar"
                                 >
@@ -1708,10 +1905,10 @@ export function FinancialDashboard(props: any) {
                   {ventaPendienteActual.pagos.map((p: any, idx: number) => (
                     <div key={idx} className="flex justify-between items-center text-[11px] text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg">
                       <span>
-                        {p.tipo === "abono" ? "Abono" : p.tipo === "final" ? "Pago final" : "Pago inicial"} · {p.metodo} · {new Date(p.fecha).toLocaleDateString()}
+                        {etiquetaTipoPago(p.tipo)} · {p.metodo} · {new Date(p.fecha).toLocaleDateString()}
                       </span>
                       <span className="font-bold">
-                        {p.metodo === "Divisas" ? `$${p.monto.toFixed(2)}` : `${fmtBs(p.monto)} BS`}
+                        {fmtPago(p)}
                       </span>
                     </div>
                   ))}
@@ -1769,7 +1966,7 @@ export function FinancialDashboard(props: any) {
                   />
                   {abonoMontoNum > 0 && (
                     <p className="text-[11px] text-gray-500 mt-1">
-                      Equivale a ${abonoDolares.toFixed(2)} · Quedaría debiendo ${Math.max(0, ventaPendienteActual.montoPendiente - abonoDolares).toFixed(2)}
+                      Equivale a ${abonoDolares.toFixed(2)} · Quedaría debiendo {fmtDolaresYBs(Math.max(0, ventaPendienteActual.montoPendiente - abonoDolares))}
                     </p>
                   )}
                 </div>
@@ -1806,13 +2003,15 @@ export function FinancialDashboard(props: any) {
             {modoPendiente === "finalizar" && (
               <div className="space-y-4 pt-3 border-t border-gray-100">
                 <p className="text-xs font-bold text-gray-600 uppercase">
-                  ¿Con qué pagó los ${ventaPendienteActual.montoPendiente.toFixed(2)} restantes?
+                  ¿Con qué pagó los ${ventaPendienteActual.montoPendiente.toFixed(2)} ({fmtBs(ventaPendienteActual.montoPendiente * tasaBcvSegura)} BS) restantes?
                 </p>
                 <SelectorPagos
                   form={pagoFinal}
                   auto={autoFinal}
                   objetivoDolares={debeDolares}
                   objetivoBs={debeBs}
+                  pagadoDolares={pagadoFinalDolares}
+                  tasa={tasaBcvSegura}
                 />
                 {errorFinal && (pagosFinalPreview.length > 0 || pagoFinal.metodos.length > 0) && !autoFinal && (
                   <p className="text-xs font-bold text-amber-700">{errorFinal}</p>
@@ -1851,11 +2050,11 @@ export function FinancialDashboard(props: any) {
                 </div>
                 <div>
                   <h3 className="text-xl font-black text-gray-900">Procesar Devolución / Cambio</h3>
-                  <p className="text-xs text-gray-500">Selecciona la venta y el producto afectado</p>
+                  <p className="text-xs text-gray-500">Selecciona la venta, el producto y la cantidad afectada</p>
                 </div>
               </div>
               <button 
-                onClick={() => setModalDevolucionOpen(false)}
+                onClick={cerrarModalDevolucion}
                 className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -1876,11 +2075,13 @@ export function FinancialDashboard(props: any) {
                   />
                 </div>
 
-                {busquedaVentaDev.trim() !== "" && !ventaSeleccionadaDev && (
+                {busquedaVentaDev.trim() !== "" && !ventaDev && (
                   <div className="mt-2 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto divide-y divide-gray-100">
                     {sales.filter(s => 
-                      s.id.toLowerCase().includes(busquedaVentaDev.toLowerCase()) || 
-                      s.items.some((i: any) => i.nombre.toLowerCase().includes(busquedaVentaDev.toLowerCase()))
+                      s.items.length > 0 && (
+                        s.id.toLowerCase().includes(busquedaVentaDev.toLowerCase()) || 
+                        s.items.some((i: any) => i.nombre.toLowerCase().includes(busquedaVentaDev.toLowerCase()))
+                      )
                     ).map(sale => (
                       <div key={sale.id} className="p-3 flex justify-between items-center hover:bg-gray-50">
                         <div>
@@ -1888,7 +2089,7 @@ export function FinancialDashboard(props: any) {
                           <p className="text-[11px] text-gray-500">{sale.items.map((i: any) => `${i.qty}x ${i.nombre}`).join(", ")}</p>
                         </div>
                         <Button 
-                          onClick={() => { setVentaSeleccionadaDev(sale); setBusquedaVentaDev(""); }}
+                          onClick={() => { setVentaDevId(sale.id); setBusquedaVentaDev(""); setIndiceItemDev(null); setMontoLiqManual(""); }}
                           size="sm"
                           className="bg-amber-600 hover:bg-amber-700 text-white text-xs cursor-pointer"
                         >
@@ -1900,52 +2101,76 @@ export function FinancialDashboard(props: any) {
                 )}
               </div>
 
-              {ventaSeleccionadaDev && (
+              {ventaDev && (
                 <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-3">
                   <div className="flex justify-between items-center">
                     <div>
-                      <span className="text-xs font-bold text-emerald-800">Venta: {ventaSeleccionadaDev.id.slice(0, 10)}</span>
-                      <p className="text-[11px] text-emerald-700 mt-0.5">Fecha de la venta: <strong>{new Date(ventaSeleccionadaDev.fecha).toLocaleString()}</strong></p>
+                      <span className="text-xs font-bold text-emerald-800">Venta: {ventaDev.id.slice(0, 10)}</span>
+                      <p className="text-[11px] text-emerald-700 mt-0.5">Fecha de la venta: <strong>{new Date(ventaDev.fecha).toLocaleString()}</strong></p>
+                      {ventaDev.pendiente && (
+                        <p className="text-[11px] text-amber-700 font-bold mt-0.5">Esta venta tiene un pago pendiente de ${(ventaDev.montoPendiente || 0).toFixed(2)}</p>
+                      )}
                     </div>
-                    <button onClick={() => setVentaSeleccionadaDev(null)} className="text-xs text-red-600 font-bold hover:underline cursor-pointer">Cambiar venta</button>
+                    <button onClick={() => { setVentaDevId(null); setIndiceItemDev(null); setMontoLiqManual(""); }} className="text-xs text-red-600 font-bold hover:underline cursor-pointer">Cambiar venta</button>
                   </div>
-                  <p className="text-xs font-bold text-gray-600 uppercase">2. Selecciona el producto que se devuelve:</p>
+                  <p className="text-xs font-bold text-gray-600 uppercase">2. Selecciona el producto que se devuelve (uno solo):</p>
                   <div className="space-y-2">
-                    {ventaSeleccionadaDev.items.map((item: any, idx: number) => (
+                    {ventaDev.items.map((item: any, idx: number) => (
                       <div 
                         key={idx} 
                         onClick={() => {
-                          setProductoDevueltoItem(item);
-                          setMontoReembolso((item.pFinalBs * item.qty).toFixed(2));
+                          setIndiceItemDev(idx);
+                          setCantidadDevolver("1");
+                          setMontoLiqManual("");
                         }}
                         className={cn(
                           "p-3 rounded-xl border flex justify-between items-center cursor-pointer transition",
-                          productoDevueltoItem?.id === item.id ? "bg-amber-600 text-white border-amber-600 font-bold" : "bg-white text-gray-800 border-gray-200 hover:bg-gray-50"
+                          indiceItemDev === idx ? "bg-amber-600 text-white border-amber-600 font-bold" : "bg-white text-gray-800 border-gray-200 hover:bg-gray-50"
                         )}
                       >
                         <span>{item.qty}x {item.nombre}</span>
-                        <span>{fmtBs(item.pFinalBs * item.qty)} BS</span>
+                        <span>${(item.pVenta * item.qty).toFixed(2)} · {fmtBs(item.pFinalBs * item.qty)} BS</span>
                       </div>
                     ))}
                   </div>
+
+                  {itemDev && (
+                    <div className="flex items-center justify-between gap-3 bg-white rounded-xl border border-gray-200 p-3">
+                      <div>
+                        <p className="text-xs font-bold text-gray-700">Unidades a devolver</p>
+                        <p className="text-[11px] text-gray-500">
+                          Compró {itemDev.qty} · ${itemDev.pVenta.toFixed(2)} c/u ({fmtBs(itemDev.pFinalBs)} BS)
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => cambiarCantidadDevolver(-1)} className="p-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 cursor-pointer">
+                          <Minus className="w-4 h-4" />
+                        </button>
+                        <span className="w-8 text-center text-sm font-black text-gray-900">{qtyDevNum || 1}</span>
+                        <button type="button" onClick={() => cambiarCantidadDevolver(1)} className="p-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 cursor-pointer">
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {productoDevueltoItem && (
+              {itemDev && (
                 <div className="space-y-4 pt-2 border-t border-gray-100">
                   <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">3. Tipo de Operación</label>
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
-                        onClick={() => setTipoDevolucion("devolucion")}
+                        onClick={() => { setTipoDevolucion("devolucion"); setMontoLiqManual(""); }}
                         className={cn("py-2.5 px-3 text-xs font-bold rounded-xl border transition cursor-pointer text-center", tipoDevolucion === "devolucion" ? "bg-amber-600 text-white border-amber-600 shadow-sm" : "bg-white text-gray-700 border-gray-200")}
                       >
                         Devolución / Reembolso
                       </button>
                       <button
                         type="button"
-                        onClick={() => setTipoDevolucion("cambio")}
+                        onClick={() => { setTipoDevolucion("cambio"); setMontoLiqManual(""); }}
                         className={cn("py-2.5 px-3 text-xs font-bold rounded-xl border transition cursor-pointer text-center", tipoDevolucion === "cambio" ? "bg-amber-600 text-white border-amber-600 shadow-sm" : "bg-white text-gray-700 border-gray-200")}
                       >
                         Cambio por otro producto
@@ -1954,53 +2179,165 @@ export function FinancialDashboard(props: any) {
                   </div>
 
                   {tipoDevolucion === "cambio" && (
-                    <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Selecciona el producto nuevo de reemplazo</label>
-                      <select 
-                        onChange={(e) => {
-                          const prod = products.find(p => p.id === e.target.value);
-                          setProductoCambioSeleccionado(prod);
-                        }}
-                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                      >
-                        <option value="">-- Elige un producto del inventario --</option>
-                        {products.map(p => (
-                          <option key={p.id} value={p.id}>{p.nombre} (Stock: {p.cantidad})</option>
-                        ))}
-                      </select>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Selecciona el producto nuevo de reemplazo</label>
+                        <select 
+                          value={productoCambioId}
+                          onChange={(e) => { setProductoCambioId(e.target.value); setCantidadCambio("1"); setMontoLiqManual(""); }}
+                          className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        >
+                          <option value="">-- Elige un producto del inventario --</option>
+                          {[...products]
+                            .filter((p) => p.cantidad > 0 || p.id === itemDev.id)
+                            .sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" }))
+                            .map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.nombre} (Stock: {p.cantidad}) · ${calcularPrecios(p.pCompra).pVenta.toFixed(2)}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                      {productoCambio && (
+                        <div className="flex items-center justify-between gap-3 bg-gray-50 rounded-xl border border-gray-200 p-3">
+                          <div>
+                            <p className="text-xs font-bold text-gray-700">Unidades del producto nuevo</p>
+                            <p className="text-[11px] text-gray-500">
+                              ${calcularPrecios(productoCambio.pCompra).pVenta.toFixed(2)} c/u ({fmtBs(calcularPrecios(productoCambio.pCompra).pFinalBs)} BS)
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button type="button" onClick={() => cambiarCantidadCambio(-1)} className="p-1.5 border border-gray-200 rounded-lg text-gray-600 bg-white hover:bg-gray-50 cursor-pointer">
+                              <Minus className="w-4 h-4" />
+                            </button>
+                            <span className="w-8 text-center text-sm font-black text-gray-900">{qtyCambioNum || 1}</span>
+                            <button type="button" onClick={() => cambiarCantidadCambio(1)} className="p-1.5 border border-gray-200 rounded-lg text-gray-600 bg-white hover:bg-gray-50 cursor-pointer">
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Monto a devolver (BS)</label>
-                      <input 
-                        type="number" 
-                        step="0.01"
-                        value={montoReembolso}
-                        onChange={(e) => setMontoReembolso(e.target.value)}
-                        placeholder="0.00"
-                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                      />
+                  {/* RESUMEN: quién le debe a quién */}
+                  {calcDev && (tipoDevolucion === "devolucion" || (productoCambio && qtyCambioNum > 0)) && (
+                    <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-3">
+                      <div className="space-y-1.5 text-xs">
+                        <div className="flex justify-between gap-3">
+                          <span className="font-bold text-gray-500 uppercase">Producto que devuelve</span>
+                          <span className="font-bold text-gray-800">${calcDev.valorDevueltoDolares.toFixed(2)} · {fmtBs(calcDev.valorDevueltoDolares * tasaBcvSegura)} BS</span>
+                        </div>
+                        {tipoDevolucion === "cambio" && (
+                          <div className="flex justify-between gap-3">
+                            <span className="font-bold text-gray-500 uppercase">Producto nuevo</span>
+                            <span className="font-bold text-gray-800">${calcDev.valorNuevoDolares.toFixed(2)} · {fmtBs(calcDev.valorNuevoDolares * tasaBcvSegura)} BS</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {saldoDev < -TOLERANCIA && (
+                        <div className="p-3 rounded-xl bg-red-50 border border-red-200">
+                          <p className="text-[11px] font-black text-red-700 uppercase">Debes dar dinero al cliente</p>
+                          <p className="text-xl font-black text-red-700">${Math.abs(saldoDev).toFixed(2)}</p>
+                          <p className="text-xs font-bold text-red-600">{fmtBs(Math.abs(saldoDev) * tasaBcvSegura)} BS (tasa BCV)</p>
+                        </div>
+                      )}
+                      {saldoDev > TOLERANCIA && !esVentaPendienteDev && (
+                        <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                          <p className="text-[11px] font-black text-emerald-700 uppercase">El cliente debe pagarte la diferencia</p>
+                          <p className="text-xl font-black text-emerald-700">${saldoDev.toFixed(2)}</p>
+                          <p className="text-xs font-bold text-emerald-600">{fmtBs(saldoDev * tasaBcvSegura)} BS (tasa BCV)</p>
+                        </div>
+                      )}
+                      {saldoDev > TOLERANCIA && esVentaPendienteDev && (
+                        <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
+                          <p className="text-[11px] font-black text-amber-700 uppercase">La venta quedará con este saldo pendiente</p>
+                          <p className="text-xl font-black text-amber-700">${saldoDev.toFixed(2)}</p>
+                          <p className="text-xs font-bold text-amber-600">{fmtBs(saldoDev * tasaBcvSegura)} BS (tasa BCV)</p>
+                        </div>
+                      )}
+                      {Math.abs(saldoDev) <= TOLERANCIA && (
+                        <div className="p-3 rounded-xl bg-gray-100 border border-gray-200 text-xs font-bold text-gray-600">
+                          {esVentaPendienteDev && (ventaDev?.montoPendiente || 0) > TOLERANCIA
+                            ? "La venta queda sin deuda pendiente. No hay dinero que mover."
+                            : "Sin diferencia: no hay dinero que entregar ni cobrar."}
+                        </div>
+                      )}
+
+                      {liquidaAhora && (
+                        <div className="space-y-3 pt-1">
+                          <p className="text-xs font-bold text-gray-600 uppercase">
+                            {saldoDev < 0 ? "¿Con qué le entregas el dinero?" : "¿Con qué paga la diferencia?"}
+                          </p>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            {METODOS_PAGO.map((metodo) => (
+                              <button
+                                key={metodo}
+                                type="button"
+                                onClick={() => { setMetodoLiq(metodo); setMontoLiqManual(""); setRefLiq(""); }}
+                                className={cn(
+                                  "py-2 px-3 text-xs font-bold rounded-xl border transition text-center cursor-pointer",
+                                  metodoLiq === metodo ? "bg-amber-600 text-white border-amber-600 shadow-sm" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+                                )}
+                              >
+                                {metodo}
+                              </button>
+                            ))}
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                              Monto a {saldoDev < 0 ? "entregar" : "cobrar"} {metodoLiq === "Divisas" ? "($)" : "(BS)"}
+                            </label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={montoLiqManual}
+                              onChange={(e) => setMontoLiqManual(e.target.value)}
+                              placeholder={liqAutoMonto.toFixed(2)}
+                              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                            />
+                            <p className="text-[11px] text-gray-500 mt-1">
+                              Sugerido: {metodoLiq === "Divisas" ? `$${liqAutoMonto.toFixed(2)}` : `${fmtBs(liqAutoMonto)} BS`}. Si aplicas una comisión, escribe el monto final que entregas.
+                            </p>
+                          </div>
+                          {necesitaReferencia(metodoLiq) && (
+                            <input
+                              type="text"
+                              maxLength={4}
+                              value={refLiq}
+                              onChange={(e) => setRefLiq(e.target.value.replace(/\D/g, ""))}
+                              placeholder="Referencia: últimos 4 dígitos (Ej: 4829)"
+                              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                            />
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Comisión / Nota</label>
-                      <input 
-                        type="text" 
-                        value={comisionDevolucion}
-                        onChange={(e) => setComisionDevolucion(e.target.value)}
-                        placeholder="Ej: 5% por reposición"
-                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                      />
-                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Comisión / Nota</label>
+                    <input 
+                      type="text" 
+                      value={comisionDevolucion}
+                      onChange={(e) => setComisionDevolucion(e.target.value)}
+                      placeholder="Ej: 5% por reposición"
+                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
                   </div>
                 </div>
+              )}
+
+              {errorDevolucion && itemDev && (
+                <p className="text-xs font-bold text-amber-700 text-right">{errorDevolucion}</p>
               )}
 
               <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
                 <button
                   type="button"
-                  onClick={() => setModalDevolucionOpen(false)}
+                  onClick={cerrarModalDevolucion}
                   className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition cursor-pointer"
                 >
                   Cancelar
@@ -2008,7 +2345,7 @@ export function FinancialDashboard(props: any) {
                 <Button
                   onClick={procesarDevolucionOCambio}
                   className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-sm cursor-pointer"
-                  disabled={!ventaSeleccionadaDev || !productoDevueltoItem || guardandoDevolucionState}
+                  disabled={!!errorDevolucion || guardandoDevolucionState}
                 >
                   {guardandoDevolucionState ? "Procesando..." : "Confirmar Devolución"}
                 </Button>
@@ -2166,8 +2503,8 @@ export function FinancialDashboard(props: any) {
                   <button
                     type="button"
                     disabled={!vueltoDisponible}
-                    onClick={() => setDarVuelto(!darVuelto)}
-                    title={!vueltoDisponible ? "Selecciona el método Divisas (y que no sea pago pendiente) para dar vuelto" : ""}
+                    onClick={() => { setDarVuelto(!darVuelto); setMontoRecibido(""); }}
+                    title={!vueltoDisponible ? "Selecciona el método Divisas o Efectivo (y que no sea pago pendiente) para dar vuelto" : ""}
                     className={cn(
                       "py-2 px-3 text-xs font-bold rounded-xl border transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed",
                       vueltoActivo ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
@@ -2200,9 +2537,9 @@ export function FinancialDashboard(props: any) {
                     <p className="text-[11px] text-amber-800">
                       Anota abajo lo que el cliente paga ahora (puede ser 0). El resto quedará pendiente.
                     </p>
-                    <div className="flex justify-between text-xs font-bold text-amber-900">
-                      <span>Paga ahora: ${pagadoVentaDolares.toFixed(2)}</span>
-                      <span>Quedará pendiente: ${pendienteVentaDolares.toFixed(2)} ({fmtBs(pendienteVentaDolares * tasaBcv)} BS)</span>
+                    <div className="flex justify-between gap-3 text-xs font-bold text-amber-900">
+                      <span>Paga ahora: ${pagadoVentaDolares.toFixed(2)} ({fmtBs(pagadoVentaDolares * tasaBcv)} BS)</span>
+                      <span className="text-right">Quedará pendiente: ${pendienteVentaDolares.toFixed(2)} ({fmtBs(pendienteVentaDolares * tasaBcv)} BS)</span>
                     </div>
                   </div>
                 )}
@@ -2212,43 +2549,86 @@ export function FinancialDashboard(props: any) {
                   auto={autoCompleto}
                   objetivoDolares={totalVentaDolares}
                   objetivoBs={totalVentaBs}
-                  ocultarDivisa={vueltoActivo}
+                  pagadoDolares={pagadoVentaDolares}
+                  tasa={tasaBcvSegura}
+                  ocultarMetodo={vueltoActivo ? metodoVueltoSel : null}
                 />
 
                 {vueltoActivo && (
                   <div className="p-3 bg-blue-50 rounded-xl border border-blue-200 space-y-3">
+                    {metodosVuelto.length > 1 && (
+                      <div className="space-y-1">
+                        <label className="block text-xs font-bold text-blue-800 uppercase">Dar el vuelto sobre:</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {metodosVuelto.map((m) => (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => { setMetodoVuelto(m); setMontoRecibido(""); }}
+                              className={cn(
+                                "py-1.5 px-3 text-xs font-bold rounded-lg border transition cursor-pointer",
+                                metodoVueltoSel === m ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-700 border-blue-200 hover:bg-blue-50"
+                              )}
+                            >
+                              {m === "Divisas" ? "Divisas ($)" : "Efectivo (BS)"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div className="flex justify-between items-center text-xs font-bold text-blue-900">
-                      <span>A cubrir con divisa:</span>
-                      <span>${restanteDivisa.toFixed(2)}</span>
+                      <span>A cubrir con {metodoVueltoSel === "Divisas" ? "divisa" : "efectivo"}:</span>
+                      <span>
+                        {metodoVueltoSel === "Divisas"
+                          ? `$${restanteDolares.toFixed(2)}`
+                          : `${fmtBs(restanteBsVuelto)} BS`}
+                      </span>
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-blue-800 uppercase mb-1">Monto recibido en divisa ($)</label>
+                      <label className="block text-xs font-bold text-blue-800 uppercase mb-1">
+                        {metodoVueltoSel === "Divisas" ? "Monto recibido en divisa ($)" : "Monto recibido en efectivo (BS)"}
+                      </label>
                       <input
                         type="number"
                         step="0.01"
                         min="0"
                         value={montoRecibido}
                         onChange={(e) => setMontoRecibido(e.target.value)}
-                        placeholder="Ej: 100"
+                        placeholder={metodoVueltoSel === "Divisas" ? "Ej: 100" : "Ej: 5000"}
                         className="w-full px-4 py-2.5 rounded-xl border border-blue-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
-                    {recibidoNum > 0 && recibidoNum >= restanteDivisa - TOLERANCIA && (
+                    {recibidoNum > 0 && recibidoDolares >= restanteDolares - TOLERANCIA && (
                       <div className="bg-white rounded-xl border border-blue-100 p-3 space-y-1.5">
-                        <div className="flex justify-between items-center">
-                          <span className="text-xs font-bold text-gray-600">Vuelto a dar ($):</span>
-                          <span className="text-lg font-black text-blue-700">${vueltoDolares.toFixed(2)}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-gray-600">En BS (tasa BCV {fmtBs(tasaBcv)}):</span>
-                          <span className="font-black text-gray-900">{fmtBs(vueltoBsBcv)} BS</span>
-                        </div>
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-gray-600">En BS (tasa DIVISA {fmtBs(tasaDivisa)}):</span>
-                          <span className="font-black text-gray-900">{fmtBs(vueltoBsDivisa)} BS</span>
-                        </div>
-                        {tasaDivisa <= 0 && (
-                          <p className="text-[11px] text-amber-700 font-bold">Configura la Tasa DIVISA en el encabezado para ver este monto.</p>
+                        {metodoVueltoSel === "Divisas" ? (
+                          <>
+                            <div className="flex justify-between items-center">
+                              <span className="text-xs font-bold text-gray-600">Vuelto a dar ($):</span>
+                              <span className="text-lg font-black text-blue-700">${vueltoDolares.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-gray-600">En BS (tasa BCV {fmtBs(tasaBcv)}):</span>
+                              <span className="font-black text-gray-900">{fmtBs(vueltoBsBcv)} BS</span>
+                            </div>
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-gray-600">En BS (tasa DIVISA {fmtBs(tasaDivisa)}):</span>
+                              <span className="font-black text-gray-900">{fmtBs(vueltoBsDivisa)} BS</span>
+                            </div>
+                            {tasaDivisa <= 0 && (
+                              <p className="text-[11px] text-amber-700 font-bold">Configura la Tasa DIVISA en el encabezado para ver este monto.</p>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex justify-between items-center">
+                              <span className="text-xs font-bold text-gray-600">Vuelto a dar (BS):</span>
+                              <span className="text-lg font-black text-blue-700">{fmtBs(vueltoMetodo)} BS</span>
+                            </div>
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-gray-600">Equivale a $ (tasa BCV {fmtBs(tasaBcv)}):</span>
+                              <span className="font-black text-gray-900">${vueltoDolares.toFixed(2)}</span>
+                            </div>
+                          </>
                         )}
                       </div>
                     )}
