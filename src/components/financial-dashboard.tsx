@@ -574,6 +574,7 @@ export function FinancialDashboard(props: any) {
     }
     if (pagadoVentaDolares < totalVentaDolares - TOLERANCIA) {
       return `Faltan $${(totalVentaDolares - pagadoVentaDolares).toFixed(2)} por cubrir.`;
+      return `Faltan $${(toFixed(2) * tasaBcv;)} por cubrir.`
     }
     return null;
   };
