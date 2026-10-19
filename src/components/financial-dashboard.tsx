@@ -276,6 +276,8 @@ export function FinancialDashboard(props: any) {
   const pagoVenta = useFormularioPagos();
   const [esPagoPendiente, setEsPagoPendiente] = useState(false);
   const [clienteNombre, setClienteNombre] = useState("");
+  // Precio final editable (rebajas). null = se usa el total calculado del carrito.
+  const [totalEditado, setTotalEditado] = useState<{ d: string; bs: string } | null>(null);
   const [darVuelto, setDarVuelto] = useState(false);
   const [metodoVuelto, setMetodoVuelto] = useState("Divisas");
   const [montoRecibido, setMontoRecibido] = useState("");
@@ -294,6 +296,11 @@ export function FinancialDashboard(props: any) {
   const [guardandoVenta, setGuardandoVenta] = useState(false);
   const [guardandoProductoState, setGuardandoProductoState] = useState(false);
   const [guardandoDevolucionState, setGuardandoDevolucionState] = useState(false);
+
+  // Si cambian los productos del carrito, el precio editado deja de aplicar y vuelve el total calculado
+  useEffect(() => {
+    setTotalEditado(null);
+  }, [carrito]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -582,8 +589,28 @@ export function FinancialDashboard(props: any) {
     }).filter(Boolean));
   };
 
-  const totalVentaDolares = carrito.reduce((sum, item) => sum + (item.pVenta * item.qty), 0);
-  const totalVentaBs = carrito.reduce((sum, item) => sum + (item.pFinalBs * item.qty), 0);
+  // Total calculado con los precios del inventario
+  const totalCarritoDolares = carrito.reduce((sum, item) => sum + (item.pVenta * item.qty), 0);
+  const totalCarritoBs = carrito.reduce((sum, item) => sum + (item.pFinalBs * item.qty), 0);
+
+  // Total final de la venta: el calculado, o el que el vendedor editó para hacer una rebaja
+  const editadoD = totalEditado ? parseFloat(totalEditado.d) : NaN;
+  const editadoBs = totalEditado ? parseFloat(totalEditado.bs) : NaN;
+  const hayTotalEditado = carrito.length > 0 && !isNaN(editadoD) && !isNaN(editadoBs) && editadoD > 0 && editadoBs > 0;
+  const totalVentaDolares = hayTotalEditado ? editadoD : totalCarritoDolares;
+  const totalVentaBs = hayTotalEditado ? editadoBs : totalCarritoBs;
+  const rebajaDolares = hayTotalEditado ? totalCarritoDolares - totalVentaDolares : 0;
+  const rebajaBs = hayTotalEditado ? totalCarritoBs - totalVentaBs : 0;
+
+  // Editar el precio final en $ actualiza los Bs, y al revés
+  const editarTotalDolares = (v: string) => {
+    const n = parseFloat(v);
+    setTotalEditado({ d: v, bs: !isNaN(n) && n > 0 ? (n * tasaBcvSegura).toFixed(2) : "" });
+  };
+  const editarTotalBs = (v: string) => {
+    const n = parseFloat(v);
+    setTotalEditado({ bs: v, d: !isNaN(n) && n > 0 ? (n / tasaBcvSegura).toFixed(2) : "" });
+  };
 
   // --- CÁLCULOS DE PAGO DE LA NUEVA VENTA ---
   const autoCompleto = pagoVenta.metodos.length === 1 && !esPagoPendiente;
@@ -659,6 +686,10 @@ export function FinancialDashboard(props: any) {
         items: [...carrito],
         totalDolares: totalVentaDolares,
         totalBs: totalVentaBs,
+        // Si se hizo una rebaja, se guarda el precio original para tener el registro
+        ...(hayTotalEditado
+          ? { precioOriginalDolares: redondear(totalCarritoDolares), precioOriginalBs: redondear(totalCarritoBs) }
+          : {}),
         metodoPago: resumenMetodos(pagos) || "Pendiente",
         referencia: resumenReferencias(pagos),
         pagos,
@@ -687,6 +718,7 @@ export function FinancialDashboard(props: any) {
       await batch.commit();
 
       setCarrito([]);
+      setTotalEditado(null);
       pagoVenta.reset();
       setEsPagoPendiente(false);
       setClienteNombre("");
@@ -836,8 +868,16 @@ export function FinancialDashboard(props: any) {
       itemNuevo = { ...productoCambio, pVenta: c.pVenta, pFinalBs: c.pFinalBs, qty: qtyCambioNum };
       itemsFinales = [...itemsRestantes, itemNuevo];
     }
-    const nuevoTotalDolares = redondear(itemsFinales.reduce((a: number, i: any) => a + i.pVenta * i.qty, 0));
-    const nuevoTotalBs = redondear(itemsFinales.reduce((a: number, i: any) => a + i.pFinalBs * i.qty, 0));
+    // Si la venta tuvo una rebaja, se mantiene la misma proporción en lo que queda de la venta
+    // (en ventas sin rebaja el factor es 1 y nada cambia)
+    const sumaOriginalD = ventaDev.items.reduce((a: number, i: any) => a + i.pVenta * i.qty, 0);
+    const sumaOriginalBs = ventaDev.items.reduce((a: number, i: any) => a + i.pFinalBs * i.qty, 0);
+    let factorD = sumaOriginalD > 0 ? ventaDev.totalDolares / sumaOriginalD : 1;
+    let factorBs = sumaOriginalBs > 0 ? ventaDev.totalBs / sumaOriginalBs : 1;
+    if (!isFinite(factorD) || Math.abs(factorD - 1) < 1e-6) factorD = 1;
+    if (!isFinite(factorBs) || Math.abs(factorBs - 1) < 1e-6) factorBs = 1;
+    const nuevoTotalDolares = redondear(itemsFinales.reduce((a: number, i: any) => a + i.pVenta * i.qty, 0) * factorD);
+    const nuevoTotalBs = redondear(itemsFinales.reduce((a: number, i: any) => a + i.pFinalBs * i.qty, 0) * factorBs);
     const pagadoPrevio = sumaDolares(obtenerPagosVenta(ventaDev));
     // saldo > 0: el cliente debe pagar. saldo < 0: el negocio debe devolver dinero.
     const saldo = redondear(nuevoTotalDolares - pagadoPrevio);
@@ -1585,6 +1625,11 @@ export function FinancialDashboard(props: any) {
                           {Array.isArray(sale.pagos) && sale.pagos.length > 1 && (
                             <p className="text-[11px] text-gray-500 mt-1">
                               {sale.pagos.map((p: any) => `${p.metodo}: ${fmtPago(p)}`).join(" · ")}
+                            </p>
+                          )}
+                          {typeof sale.precioOriginalDolares === "number" && Math.abs(sale.precioOriginalDolares - sale.totalDolares) > 0.005 && (
+                            <p className="text-[11px] text-emerald-700 font-bold mt-1">
+                              Precio ajustado: original ${sale.precioOriginalDolares.toFixed(2)} → ${sale.totalDolares.toFixed(2)}
                             </p>
                           )}
                           {sale.vuelto && (
@@ -2445,6 +2490,7 @@ export function FinancialDashboard(props: any) {
                         <div key={prod.id} className="p-3 flex justify-between items-center hover:bg-gray-50">
                           <div>
                             <p className="font-bold text-gray-900 text-sm">{prod.nombre}</p>
+                            <p className="text-xs font-mono font-bold text-gray-600">Código: {prod.codigo}</p>
                             <p className="text-xs text-gray-500">Stock: {prod.cantidad} | Venta: ${calc.pVenta} ({fmtBs(calc.pFinalBs)} BS)</p>
                           </div>
                           <Button 
@@ -2470,6 +2516,7 @@ export function FinancialDashboard(props: any) {
                       <div key={item.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border border-gray-100">
                         <div>
                           <p className="font-bold text-gray-900 text-sm">{item.nombre}</p>
+                          <p className="text-[11px] font-mono font-bold text-gray-500">Código: {item.codigo}</p>
                           <p className="text-xs text-gray-500">${item.pVenta} c/u ({fmtBs(item.pFinalBs)} BS)</p>
                         </div>
                         <div className="flex items-center gap-3">
@@ -2489,14 +2536,50 @@ export function FinancialDashboard(props: any) {
               </div>
 
               <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-4">
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-center gap-3">
                   <span className="text-sm font-bold text-gray-600">Total Venta ($):</span>
-                  <span className="text-xl font-black text-emerald-700">${totalVentaDolares.toFixed(2)}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={totalEditado ? totalEditado.d : (carrito.length > 0 ? totalCarritoDolares.toFixed(2) : "")}
+                    onChange={(e) => editarTotalDolares(e.target.value)}
+                    disabled={carrito.length === 0}
+                    placeholder={totalCarritoDolares.toFixed(2)}
+                    className="w-40 px-3 py-1.5 rounded-lg border border-emerald-200 text-xl font-black text-right text-emerald-700 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
+                  />
                 </div>
-                <div className="flex justify-between items-center border-t border-emerald-100/60 pt-2">
+                <div className="flex justify-between items-center gap-3 border-t border-emerald-100/60 pt-2">
                   <span className="text-sm font-bold text-gray-600">Total Venta (BS):</span>
-                  <span className="text-xl font-black text-gray-900">{fmtBs(totalVentaBs)} BS</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={totalEditado ? totalEditado.bs : (carrito.length > 0 ? totalCarritoBs.toFixed(2) : "")}
+                    onChange={(e) => editarTotalBs(e.target.value)}
+                    disabled={carrito.length === 0}
+                    placeholder={totalCarritoBs.toFixed(2)}
+                    className="w-40 px-3 py-1.5 rounded-lg border border-emerald-200 text-xl font-black text-right text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
+                  />
                 </div>
+                {hayTotalEditado && (
+                  <div className="flex justify-between items-center gap-3 text-[11px] font-bold text-gray-600 bg-white rounded-lg border border-emerald-100 px-3 py-2">
+                    <span>
+                      Precio original: ${totalCarritoDolares.toFixed(2)} · {fmtBs(totalCarritoBs)} BS
+                      {" · "}
+                      <span className={rebajaDolares >= 0 ? "text-emerald-700" : "text-amber-700"}>
+                        {rebajaDolares >= 0 ? "Rebaja" : "Aumento"}: ${Math.abs(rebajaDolares).toFixed(2)} · {fmtBs(Math.abs(rebajaBs))} BS
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setTotalEditado(null)}
+                      className="text-red-600 hover:underline whitespace-nowrap cursor-pointer"
+                    >
+                      Restablecer
+                    </button>
+                  </div>
+                )}
 
                 {/* Opciones especiales */}
                 <div className="grid grid-cols-2 gap-2 pt-2 border-t border-emerald-100/60">
