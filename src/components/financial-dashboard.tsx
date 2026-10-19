@@ -668,6 +668,20 @@ export function FinancialDashboard(props: any) {
   };
   const errorVenta = validarVenta();
 
+  // Cierra "Registrar Nueva Venta" y deja todos los campos vacíos para la próxima vez
+  const cerrarModalVenta = () => {
+    setCarrito([]);
+    setTotalEditado(null);
+    pagoVenta.reset();
+    setEsPagoPendiente(false);
+    setClienteNombre("");
+    setDarVuelto(false);
+    setMetodoVuelto("Divisas");
+    setMontoRecibido("");
+    setBusquedaProducto("");
+    setModalVentaOpen(false);
+  };
+
   const confirmarVenta = async () => {
     if (guardandoVenta || validarVenta()) return;
 
@@ -724,6 +738,8 @@ export function FinancialDashboard(props: any) {
       setClienteNombre("");
       setDarVuelto(false);
       setMontoRecibido("");
+      setBusquedaProducto("");
+      setMetodoVuelto("Divisas");
       setModalVentaOpen(false);
     } catch (e: any) {
       console.error("Error al procesar la venta en Firebase:", e);
@@ -2460,8 +2476,8 @@ export function FinancialDashboard(props: any) {
           <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-black text-gray-900">Registrar Nueva Venta</h3>
-              <button 
-                onClick={() => setModalVentaOpen(false)}
+              <button
+                onClick={cerrarModalVenta}
                 className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -2726,7 +2742,7 @@ export function FinancialDashboard(props: any) {
               <div className="flex justify-end gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => setModalVentaOpen(false)}
+                  onClick={cerrarModalVenta}
                   className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition cursor-pointer"
                 >
                   Cancelar
