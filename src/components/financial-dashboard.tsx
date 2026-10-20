@@ -48,6 +48,7 @@ const auth = getAuth(app);
 const COLLECTION_INVENTARIO = "motopartes_pirueta_inventario";
 const COLLECTION_VENTAS = "motopartes_pirueta_ventas";
 const COLLECTION_DEVOLUCIONES = "motopartes_pirueta_devoluciones";
+const COLLECTION_INTERCAMBIOS = "motopartes_pirueta_intercambios";
 const COLLECTION_CONFIG = "motopartes_pirueta_configuracion";
 
 // --- CONSTANTES Y UTILIDADES ---
@@ -88,6 +89,12 @@ const fmtPago = (p: any) => {
   const txt = p.metodo === "Divisas" ? `$${abs.toFixed(2)}` : `${fmtBs(abs)} BS`;
   return p.monto < 0 ? `-${txt}` : txt;
 };
+
+// Monto en su moneda según el método ($ para Divisas, BS para el resto)
+const fmtMonto = (metodo: string, monto: number) =>
+  metodo === "Divisas" ? `$${(monto || 0).toFixed(2)}` : `${fmtBs(monto)} BS`;
+
+const METODOS_BS = ["Efectivo", "Pago movil", "Transferencia"];
 
 const etiquetaTipoPago = (tipo: string) =>
   tipo === "abono" ? "Abono"
@@ -245,6 +252,21 @@ export function FinancialDashboard(props: any) {
   const [sales, setSales] = useState<any[]>([]);
   const [devoluciones, setDevoluciones] = useState<any[]>([]);
 
+  // Intercambio interno (cambio de divisas / bolívares en caja)
+  const [intercambios, setIntercambios] = useState<any[]>([]);
+  const [filtroIntercambios, setFiltroIntercambios] = useState("dia");
+  const [modalIntercambioOpen, setModalIntercambioOpen] = useState(false);
+  const [intercambioEditId, setIntercambioEditId] = useState<string | null>(null);
+  const [recMoneda, setRecMoneda] = useState<"USD" | "BS">("USD");
+  const [recMetodoBs, setRecMetodoBs] = useState("Efectivo");
+  const [recMonto, setRecMonto] = useState("");
+  const [recRef, setRecRef] = useState("");
+  const [entMetodoBs, setEntMetodoBs] = useState("Efectivo");
+  const [entMonto, setEntMonto] = useState("");
+  const [entRef, setEntRef] = useState("");
+  const [intercambioNota, setIntercambioNota] = useState("");
+  const [guardandoIntercambio, setGuardandoIntercambio] = useState(false);
+
   const [busquedaInventario, setBusquedaInventario] = useState("");
   const [modalStockBajoOpen, setModalStockBajoOpen] = useState(false);
 
@@ -370,6 +392,12 @@ export function FinancialDashboard(props: any) {
       setDevoluciones(listaDev);
     });
 
+    const unsubInter = onSnapshot(collection(db, COLLECTION_INTERCAMBIOS), (snapshot) => {
+      const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      lista.sort((a: any, b: any) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+      setIntercambios(lista);
+    });
+
     const unsubTasa = onSnapshot(doc(db, COLLECTION_CONFIG, "bcv"), (docSnap) => {
       if (docSnap.exists()) {
         const val = docSnap.data().valor;
@@ -390,6 +418,7 @@ export function FinancialDashboard(props: any) {
       unsubProducts();
       unsubSales();
       unsubDev();
+      unsubInter();
       unsubTasa();
       unsubDivisa();
     };
@@ -1087,6 +1116,111 @@ export function FinancialDashboard(props: any) {
     .filter(p => Number(p.cantidad) <= 5)
     .sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" }));
 
+  // --- INTERCAMBIO INTERNO ---
+  // Lo que se da es siempre la moneda contraria a la que se recibe ($ ↔ BS)
+  const entMoneda: "USD" | "BS" = recMoneda === "USD" ? "BS" : "USD";
+  const recMetodo = recMoneda === "USD" ? "Divisas" : recMetodoBs;
+  const entMetodo = entMoneda === "USD" ? "Divisas" : entMetodoBs;
+  const recMontoNum = parseFloat(recMonto) || 0;
+  const entMontoNum = parseFloat(entMonto) || 0;
+
+  const validarIntercambio = (): string | null => {
+    if (recMontoNum <= 0) return "Escribe el monto recibido.";
+    if (entMontoNum <= 0) return "Escribe el monto dado.";
+    if (necesitaReferencia(recMetodo) && recRef.length !== 4) return "Ingresa los 4 últimos dígitos de la referencia del monto recibido.";
+    if (necesitaReferencia(entMetodo) && entRef.length !== 4) return "Ingresa los 4 últimos dígitos de la referencia del monto dado.";
+    return null;
+  };
+  const errorIntercambio = validarIntercambio();
+
+  const limpiarFormIntercambio = () => {
+    setRecMoneda("USD");
+    setRecMetodoBs("Efectivo");
+    setRecMonto("");
+    setRecRef("");
+    setEntMetodoBs("Efectivo");
+    setEntMonto("");
+    setEntRef("");
+    setIntercambioNota("");
+  };
+
+  const abrirNuevoIntercambio = () => {
+    setIntercambioEditId(null);
+    limpiarFormIntercambio();
+    setModalIntercambioOpen(true);
+  };
+
+  const abrirEditarIntercambio = (it: any) => {
+    setIntercambioEditId(it.id);
+    setRecMoneda(it.recibido.metodo === "Divisas" ? "USD" : "BS");
+    setRecMetodoBs(it.recibido.metodo === "Divisas" ? "Efectivo" : it.recibido.metodo);
+    setRecMonto(String(it.recibido.monto));
+    setRecRef(it.recibido.referencia || "");
+    setEntMetodoBs(it.entregado.metodo === "Divisas" ? "Efectivo" : it.entregado.metodo);
+    setEntMonto(String(it.entregado.monto));
+    setEntRef(it.entregado.referencia || "");
+    setIntercambioNota(it.nota || "");
+    setModalIntercambioOpen(true);
+  };
+
+  const cerrarModalIntercambio = () => {
+    setModalIntercambioOpen(false);
+    setIntercambioEditId(null);
+    limpiarFormIntercambio();
+  };
+
+  const guardarIntercambio = async () => {
+    if (guardandoIntercambio || validarIntercambio()) return;
+    setGuardandoIntercambio(true);
+    try {
+      const datos = {
+        recibido: {
+          metodo: recMetodo,
+          monto: redondear(recMontoNum),
+          referencia: necesitaReferencia(recMetodo) ? recRef : ""
+        },
+        entregado: {
+          metodo: entMetodo,
+          monto: redondear(entMontoNum),
+          referencia: necesitaReferencia(entMetodo) ? entRef : ""
+        },
+        nota: intercambioNota.trim()
+      };
+      if (intercambioEditId) {
+        await updateDoc(doc(db, COLLECTION_INTERCAMBIOS, intercambioEditId), {
+          ...datos,
+          editado: true,
+          fechaEdicion: new Date().toISOString()
+        });
+      } else {
+        await addDoc(collection(db, COLLECTION_INTERCAMBIOS), {
+          fecha: new Date().toISOString(),
+          ...datos,
+          editado: false
+        });
+      }
+      cerrarModalIntercambio();
+    } catch (e) {
+      console.error("Error al guardar el intercambio:", e);
+    } finally {
+      setGuardandoIntercambio(false);
+    }
+  };
+
+  // Filtro propio de la lista de intercambios (el reporte usa el filtro de Ventas)
+  const intercambiosFiltrados = intercambios.filter((it: any) => {
+    const f = new Date(it.fecha);
+    const ahora = new Date();
+    if (filtroIntercambios === "dia") return f.toDateString() === ahora.toDateString();
+    if (filtroIntercambios === "semana") {
+      const unaSemanaAtras = new Date();
+      unaSemanaAtras.setDate(ahora.getDate() - 7);
+      return f >= unaSemanaAtras;
+    }
+    if (filtroIntercambios === "mes") return f.getMonth() === ahora.getMonth() && f.getFullYear() === ahora.getFullYear();
+    return true;
+  });
+
   // --- REPORTE DE VENTAS (sigue el filtro Día / Semana / Mes) ---
   const generarReportePDF = () => {
     const etiquetaPeriodo = filtroVentas === "dia" ? "Diario" : filtroVentas === "semana" ? "de los Últimos 7 Días" : "Mensual";
@@ -1109,6 +1243,23 @@ export function FinancialDashboard(props: any) {
       else if (p.metodo === "Divisas") divisaDolar += p.monto;
       else if (p.metodo === "Pago movil") pagoMovilBs += p.monto;
       else if (p.metodo === "Transferencia") transferenciaBs += p.monto;
+    });
+
+    // Intercambios internos del periodo: lo recibido suma a la caja y lo dado resta
+    const interPeriodo = intercambios.filter((it: any) => dentroDelFiltro(it.fecha));
+    let cajaEfectivoBs = efectivoBs;
+    let cajaDivisaDolar = divisaDolar;
+    let cajaPagoMovilBs = pagoMovilBs;
+    let cajaTransferenciaBs = transferenciaBs;
+    const moverCaja = (metodo: string, monto: number) => {
+      if (metodo === "Efectivo") cajaEfectivoBs += monto;
+      else if (metodo === "Divisas") cajaDivisaDolar += monto;
+      else if (metodo === "Pago movil") cajaPagoMovilBs += monto;
+      else if (metodo === "Transferencia") cajaTransferenciaBs += monto;
+    };
+    interPeriodo.forEach((it: any) => {
+      moverCaja(it.recibido.metodo, it.recibido.monto);
+      moverCaja(it.entregado.metodo, -it.entregado.monto);
     });
 
     const totalCobradoDolar = sumaDolares(pagosPeriodo);
@@ -1217,6 +1368,44 @@ export function FinancialDashboard(props: any) {
               <p style="color:#b45309;">Pendiente por cobrar (todos los clientes): $${totalPorCobrarDolar.toFixed(2)}</p>
             </div>
           </div>
+
+          ${interPeriodo.length > 0 ? `
+          <div class="dev-box" style="border-color:#0ea5e9; background:#f0f9ff;">
+            <h3 style="margin: 0 0 8px 0; color: #0369a1; font-size: 15px;">Intercambios internos del periodo (${interPeriodo.length})</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha / Hora</th>
+                  <th>Recibí</th>
+                  <th>Di</th>
+                  <th>Ref.</th>
+                  <th>Nota</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${interPeriodo.map((it: any) => `
+                  <tr>
+                    <td>${filtroVentas === "dia" ? new Date(it.fecha).toLocaleTimeString() : new Date(it.fecha).toLocaleString()}${it.editado ? " <em>(editado)</em>" : ""}</td>
+                    <td>${escapeHtml(fmtMonto(it.recibido.metodo, it.recibido.monto))} (${escapeHtml(it.recibido.metodo)})</td>
+                    <td>${escapeHtml(fmtMonto(it.entregado.metodo, it.entregado.monto))} (${escapeHtml(it.entregado.metodo)})</td>
+                    <td>${escapeHtml([it.recibido.referencia, it.entregado.referencia].filter(Boolean).join(", ")) || "N/A"}</td>
+                    <td>${escapeHtml(it.nota) || ""}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="totales-box">
+            <h3>Movimiento neto de caja por método (ventas + intercambios)</h3>
+            <div class="totales-grid">
+              <div><span>Efectivo (Bolívares):</span> <strong>${fmtBs(cajaEfectivoBs)} BS</strong></div>
+              <div><span>Divisa (Dólares):</span> <strong>$${cajaDivisaDolar.toFixed(2)}</strong></div>
+              <div><span>Pago Móvil (BS):</span> <strong>${fmtBs(cajaPagoMovilBs)} BS</strong></div>
+              <div><span>Transferencia (BS):</span> <strong>${fmtBs(cajaTransferenciaBs)} BS</strong></div>
+            </div>
+          </div>
+          ` : ""}
 
           <div class="print-btn">
             <button onclick="window.print()">Imprimir / Guardar como PDF</button>
@@ -1336,6 +1525,10 @@ export function FinancialDashboard(props: any) {
               <RotateCcw className="w-5 h-5" />
               Devoluciones
             </button>
+            <button onClick={() => setCurrentSection("intercambios")} className={navClase("intercambios")}>
+              <RefreshCw className="w-5 h-5" />
+              Intercambio interno
+            </button>
             <button onClick={() => setCurrentSection("inventario")} className={navClase("inventario")}>
               <Package className="w-5 h-5" />
               Inventario
@@ -1369,6 +1562,7 @@ export function FinancialDashboard(props: any) {
                 {currentSection === "ventas" && "Módulo de Ventas"}
                 {currentSection === "pendientes" && "Pagos Pendientes"}
                 {currentSection === "devoluciones" && "Módulo de Devoluciones y Cambios"}
+                {currentSection === "intercambios" && "Intercambio Interno"}
                 {currentSection === "inventario" && "Módulo de Inventario"}
               </h2>
               <p className="text-emerald-100 text-sm mt-1">
@@ -1811,6 +2005,73 @@ export function FinancialDashboard(props: any) {
             </div>
           )}
 
+          {currentSection === "intercambios" && (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white rounded-2xl border border-gray-200 p-6 shadow-sm gap-4">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Intercambio interno de caja</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Anota cuando cambias dólares por bolívares (o al revés). Los montos los escribes tú. Aparecen en el reporte de ventas.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                  <div className="flex bg-gray-100 p-1 rounded-xl">
+                    {[["dia", "Día"], ["semana", "Semana"], ["mes", "Mes"]].map(([val, label]) => (
+                      <button
+                        key={val}
+                        onClick={() => setFiltroIntercambios(val)}
+                        className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer", filtroIntercambios === val ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <Button onClick={abrirNuevoIntercambio} className="bg-sky-600 hover:bg-sky-700 text-white font-bold flex items-center gap-2 cursor-pointer">
+                    <Plus className="w-4 h-4" /> Nuevo intercambio
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {intercambiosFiltrados.length > 0 ? (
+                  intercambiosFiltrados.map((it: any) => (
+                    <div key={it.id} className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-bold px-2.5 py-1 bg-sky-50 text-sky-700 rounded-lg">Intercambio</span>
+                          {it.editado && (
+                            <span
+                              className="text-xs font-bold px-2 py-1 bg-gray-100 text-gray-600 rounded-lg"
+                              title={it.fechaEdicion ? `Editado: ${new Date(it.fechaEdicion).toLocaleString()}` : "Editado"}
+                            >
+                              Editado
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-400">{new Date(it.fecha).toLocaleString()} (ID: {it.id.slice(0, 8)})</p>
+                        <p className="text-sm text-gray-800">
+                          <strong>Recibí:</strong> {fmtMonto(it.recibido.metodo, it.recibido.monto)} <span className="text-gray-500">({it.recibido.metodo}{it.recibido.referencia ? ` · Ref: ${it.recibido.referencia}` : ""})</span>
+                        </p>
+                        <p className="text-sm text-gray-800">
+                          <strong>Di:</strong> {fmtMonto(it.entregado.metodo, it.entregado.monto)} <span className="text-gray-500">({it.entregado.metodo}{it.entregado.referencia ? ` · Ref: ${it.entregado.referencia}` : ""})</span>
+                        </p>
+                        {it.nota && <p className="text-xs text-gray-500">Nota: {it.nota}</p>}
+                      </div>
+                      <button
+                        onClick={() => abrirEditarIntercambio(it)}
+                        className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
+                      >
+                        <Edit className="w-4 h-4" /> Editar
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center text-gray-500">
+                    No hay intercambios registrados para este filtro de tiempo.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {currentSection === "inventario" && (
             <div className="space-y-6">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white rounded-2xl border border-gray-200 p-6 shadow-sm gap-4">
@@ -2096,6 +2357,153 @@ export function FinancialDashboard(props: any) {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: INTERCAMBIO INTERNO (nuevo / editar) */}
+      {modalIntercambioOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto space-y-5">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-sky-50 text-sky-700 rounded-xl">
+                  <RefreshCw className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-gray-900">{intercambioEditId ? "Editar intercambio" : "Nuevo intercambio interno"}</h3>
+                  <p className="text-xs text-gray-500">Escribe los montos tal cual los recibiste y los diste</p>
+                </div>
+              </div>
+              <button
+                onClick={cerrarModalIntercambio}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {[
+              {
+                titulo: "Recibí",
+                moneda: recMoneda,
+                elegirMoneda: (m: "USD" | "BS") => setRecMoneda(m),
+                metodoBs: recMetodoBs,
+                setMetodoBs: setRecMetodoBs,
+                monto: recMonto,
+                setMonto: setRecMonto,
+                referencia: recRef,
+                setReferencia: setRecRef,
+                metodo: recMetodo
+              },
+              {
+                titulo: "Di",
+                moneda: entMoneda,
+                elegirMoneda: (m: "USD" | "BS") => setRecMoneda(m === "USD" ? "BS" : "USD"),
+                metodoBs: entMetodoBs,
+                setMetodoBs: setEntMetodoBs,
+                monto: entMonto,
+                setMonto: setEntMonto,
+                referencia: entRef,
+                setReferencia: setEntRef,
+                metodo: entMetodo
+              }
+            ].map((lado) => (
+              <div key={lado.titulo} className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-3">
+                <p className="text-sm font-black text-gray-800 uppercase">{lado.titulo}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {([["USD", "Dólares ($)"], ["BS", "Bolívares (BS)"]] as const).map(([m, label]) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => lado.elegirMoneda(m)}
+                      className={cn(
+                        "py-2 px-3 text-xs font-bold rounded-xl border transition cursor-pointer",
+                        lado.moneda === m ? "bg-sky-600 text-white border-sky-600 shadow-sm" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {lado.moneda === "BS" && (
+                  <div className="grid grid-cols-3 gap-2">
+                    {METODOS_BS.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => lado.setMetodoBs(m)}
+                        className={cn(
+                          "py-1.5 px-2 text-xs font-bold rounded-lg border transition cursor-pointer",
+                          lado.metodoBs === m ? "bg-sky-100 text-sky-800 border-sky-300" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+                        )}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                    Monto {lado.titulo === "Recibí" ? "recibido" : "dado"} {lado.moneda === "USD" ? "($)" : "(BS)"}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={lado.monto}
+                    onChange={(e) => lado.setMonto(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                </div>
+
+                {necesitaReferencia(lado.metodo) && (
+                  <input
+                    type="text"
+                    maxLength={4}
+                    value={lado.referencia}
+                    onChange={(e) => lado.setReferencia(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                    placeholder="Referencia: últimos 4 dígitos (Ej: 4829)"
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                )}
+              </div>
+            ))}
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nota (opcional)</label>
+              <input
+                type="text"
+                value={intercambioNota}
+                onChange={(e) => setIntercambioNota(e.target.value)}
+                placeholder="Ej: cliente que vendió dólares"
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+            </div>
+
+            {errorIntercambio && (recMontoNum > 0 || entMontoNum > 0) && (
+              <p className="text-xs font-bold text-amber-700 text-right">{errorIntercambio}</p>
+            )}
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={cerrarModalIntercambio}
+                className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <Button
+                onClick={guardarIntercambio}
+                disabled={!!errorIntercambio || guardandoIntercambio}
+                className="bg-sky-600 hover:bg-sky-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-sm cursor-pointer"
+              >
+                {guardandoIntercambio ? "Guardando..." : (intercambioEditId ? "Guardar cambios" : "Guardar intercambio")}
+              </Button>
+            </div>
           </div>
         </div>
       )}
