@@ -97,7 +97,8 @@ const fmtMonto = (metodo: string, monto: number) =>
 const METODOS_BS = ["Efectivo", "Pago movil", "Transferencia"];
 
 const etiquetaTipoPago = (tipo: string) =>
-  tipo === "abono" ? "Abono"
+  tipo === "edicion" ? "Ajuste por edición"
+  : tipo === "abono" ? "Abono"
   : tipo === "final" ? "Pago final"
   : tipo === "devolucion" ? "Reembolso"
   : tipo === "cambio" ? "Cobro por cambio"
@@ -274,15 +275,25 @@ export function FinancialDashboard(props: any) {
   const [busquedaVentaDev, setBusquedaVentaDev] = useState("");
   const [modalDevolucionOpen, setModalDevolucionOpen] = useState(false);
   const [ventaDevId, setVentaDevId] = useState<string | null>(null);
-  const [indiceItemDev, setIndiceItemDev] = useState<number | null>(null);
-  const [cantidadDevolver, setCantidadDevolver] = useState("1");
+  // Productos a devolver: posición del producto dentro de la venta -> unidades a devolver
+  const [devSel, setDevSel] = useState<Record<number, number>>({});
   const [tipoDevolucion, setTipoDevolucion] = useState<"devolucion" | "cambio">("devolucion");
-  const [productoCambioId, setProductoCambioId] = useState("");
-  const [cantidadCambio, setCantidadCambio] = useState("1");
+  // Productos nuevos del cambio (varios)
+  const [cambioNuevos, setCambioNuevos] = useState<{ id: string; qty: number }[]>([]);
   const [metodoLiq, setMetodoLiq] = useState("Efectivo");
   const [montoLiqManual, setMontoLiqManual] = useState("");
   const [refLiq, setRefLiq] = useState("");
   const [comisionDevolucion, setComisionDevolucion] = useState("");
+
+  // Estados para Editar venta
+  const [editVentaId, setEditVentaId] = useState<string | null>(null);
+  const [editItems, setEditItems] = useState<any[]>([]);
+  const [editTotal, setEditTotal] = useState<{ d: string; bs: string } | null>(null);
+  const [editBusqueda, setEditBusqueda] = useState("");
+  const [editMetodoLiq, setEditMetodoLiq] = useState("Efectivo");
+  const [editMontoLiq, setEditMontoLiq] = useState("");
+  const [editRefLiq, setEditRefLiq] = useState("");
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false);
 
   const [modalProductoOpen, setModalProductoOpen] = useState(false);
   const [editandoId, setEditandoId] = useState<string | null>(null);
@@ -323,6 +334,11 @@ export function FinancialDashboard(props: any) {
   useEffect(() => {
     setTotalEditado(null);
   }, [carrito]);
+
+  // Igual al editar una venta: si cambian sus productos, el total editado se recalcula
+  useEffect(() => {
+    setEditTotal(null);
+  }, [editItems]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -645,7 +661,7 @@ export function FinancialDashboard(props: any) {
   const autoCompleto = pagoVenta.metodos.length === 1 && !esPagoPendiente;
 
   // El vuelto se puede dar cuando se paga con Divisas ($) o con Efectivo (BS)
-  const metodosVuelto = pagoVenta.metodos.filter((m) => m === "Divisas" || m === "Efectivo");
+  const metodosVuelto: string[] = pagoVenta.metodos.filter((m) => m === "Divisas" || m === "Efectivo");
   const vueltoDisponible = metodosVuelto.length > 0 && !esPagoPendiente;
   const vueltoActivo = darVuelto && vueltoDisponible;
   const metodoVueltoSel = metodosVuelto.includes(metodoVuelto) ? metodoVuelto : (metodosVuelto[0] || "Divisas");
@@ -888,39 +904,59 @@ export function FinancialDashboard(props: any) {
   };
 
   // --- DEVOLUCIONES Y CAMBIOS ---
-  const ventaDev = sales.find((s: any) => s.id === ventaDevId) || null;
-  const itemDev = ventaDev && indiceItemDev !== null ? (ventaDev.items[indiceItemDev] || null) : null;
-  const productoCambio = products.find((p) => p.id === productoCambioId) || null;
-  const qtyDevNum = itemDev ? Math.min(itemDev.qty, Math.max(0, parseInt(cantidadDevolver) || 0)) : 0;
-  const qtyCambioNum = Math.max(0, parseInt(cantidadCambio) || 0);
+  // Si la venta tuvo una rebaja, se mantiene la misma proporción en lo que queda de la venta
+  // (en ventas sin rebaja el factor es 1 y nada cambia)
+  const factoresVenta = (venta: any) => {
+    const sumaOriginalD = venta.items.reduce((a: number, i: any) => a + i.pVenta * i.qty, 0);
+    const sumaOriginalBs = venta.items.reduce((a: number, i: any) => a + i.pFinalBs * i.qty, 0);
+    let factorD = sumaOriginalD > 0 ? venta.totalDolares / sumaOriginalD : 1;
+    let factorBs = sumaOriginalBs > 0 ? venta.totalBs / sumaOriginalBs : 1;
+    if (!isFinite(factorD) || Math.abs(factorD - 1) < 1e-6) factorD = 1;
+    if (!isFinite(factorBs) || Math.abs(factorBs - 1) < 1e-6) factorBs = 1;
+    return { factorD, factorBs };
+  };
 
-  // Stock disponible del producto nuevo (si es el mismo que se devuelve, también cuenta lo que vuelve)
-  const stockDisponibleCambio = productoCambio
-    ? productoCambio.cantidad + (itemDev && productoCambio.id === itemDev.id ? qtyDevNum : 0)
-    : 0;
+  const ventaDev = sales.find((s: any) => s.id === ventaDevId) || null;
+
+  // Productos seleccionados para devolver (cada uno con su cantidad)
+  const itemsDevSel: { idx: number; item: any; qty: number }[] = ventaDev
+    ? Object.entries(devSel)
+        .map(([k, q]) => {
+          const item = ventaDev.items[Number(k)];
+          return { idx: Number(k), item, qty: item ? Math.min(item.qty, Math.max(0, Math.floor(Number(q) || 0))) : 0 };
+        })
+        .filter((x) => x.item && x.qty > 0)
+    : [];
+
+  // Unidades devueltas y unidades nuevas por producto (para el stock)
+  const devueltoPorId: Record<string, number> = {};
+  itemsDevSel.forEach((x) => { devueltoPorId[x.item.id] = (devueltoPorId[x.item.id] || 0) + x.qty; });
+  // Stock disponible de un producto nuevo (si también se devuelve ese producto, esas unidades vuelven al stock)
+  const stockDisponibleCambio = (id: string) => {
+    const p = products.find((pr) => pr.id === id);
+    return (p ? p.cantidad : 0) + (devueltoPorId[id] || 0);
+  };
+  const lineasCambio: { id: string; qty: number; producto: any }[] = cambioNuevos
+    .map((l) => ({ ...l, producto: products.find((p) => p.id === l.id) || null }))
+    .filter((l: any) => l.producto && l.qty > 0);
+  const nuevoPorId: Record<string, number> = {};
+  lineasCambio.forEach((l) => { nuevoPorId[l.id] = (nuevoPorId[l.id] || 0) + l.qty; });
 
   // Resultado de la operación: nuevos ítems, nuevos totales y saldo entre cliente y negocio
   const calcDev = (() => {
-    if (!ventaDev || !itemDev || qtyDevNum < 1) return null;
+    if (!ventaDev || itemsDevSel.length === 0) return null;
     const itemsRestantes = ventaDev.items.flatMap((it: any, i: number) => {
-      if (i !== indiceItemDev) return [it];
-      return it.qty - qtyDevNum > 0 ? [{ ...it, qty: it.qty - qtyDevNum }] : [];
+      const q = itemsDevSel.find((x) => x.idx === i)?.qty || 0;
+      return it.qty - q > 0 ? [{ ...it, qty: it.qty - q }] : [];
     });
-    let itemsFinales = itemsRestantes;
-    let itemNuevo: any = null;
-    if (tipoDevolucion === "cambio" && productoCambio && qtyCambioNum > 0) {
-      const c = calcularPrecios(productoCambio.pCompra);
-      itemNuevo = { ...productoCambio, pVenta: c.pVenta, pFinalBs: c.pFinalBs, qty: qtyCambioNum };
-      itemsFinales = [...itemsRestantes, itemNuevo];
-    }
-    // Si la venta tuvo una rebaja, se mantiene la misma proporción en lo que queda de la venta
-    // (en ventas sin rebaja el factor es 1 y nada cambia)
-    const sumaOriginalD = ventaDev.items.reduce((a: number, i: any) => a + i.pVenta * i.qty, 0);
-    const sumaOriginalBs = ventaDev.items.reduce((a: number, i: any) => a + i.pFinalBs * i.qty, 0);
-    let factorD = sumaOriginalD > 0 ? ventaDev.totalDolares / sumaOriginalD : 1;
-    let factorBs = sumaOriginalBs > 0 ? ventaDev.totalBs / sumaOriginalBs : 1;
-    if (!isFinite(factorD) || Math.abs(factorD - 1) < 1e-6) factorD = 1;
-    if (!isFinite(factorBs) || Math.abs(factorBs - 1) < 1e-6) factorBs = 1;
+    const itemsNuevos: any[] = tipoDevolucion === "cambio"
+      ? lineasCambio.map((l) => {
+          const c = calcularPrecios(l.producto.pCompra);
+          return { ...l.producto, pVenta: c.pVenta, pFinalBs: c.pFinalBs, qty: l.qty };
+        })
+      : [];
+    const itemsFinales = [...itemsRestantes, ...itemsNuevos];
+    const { factorD, factorBs } = factoresVenta(ventaDev);
     const nuevoTotalDolares = redondear(itemsFinales.reduce((a: number, i: any) => a + i.pVenta * i.qty, 0) * factorD);
     const nuevoTotalBs = redondear(itemsFinales.reduce((a: number, i: any) => a + i.pFinalBs * i.qty, 0) * factorBs);
     const pagadoPrevio = sumaDolares(obtenerPagosVenta(ventaDev));
@@ -928,12 +964,12 @@ export function FinancialDashboard(props: any) {
     const saldo = redondear(nuevoTotalDolares - pagadoPrevio);
     return {
       itemsFinales,
-      itemNuevo,
+      itemsNuevos,
       nuevoTotalDolares,
       nuevoTotalBs,
       saldo,
-      valorDevueltoDolares: redondear(itemDev.pVenta * qtyDevNum),
-      valorNuevoDolares: itemNuevo ? redondear(itemNuevo.pVenta * itemNuevo.qty) : 0
+      valorDevueltoDolares: redondear(itemsDevSel.reduce((a, x) => a + x.item.pVenta * x.qty, 0)),
+      valorNuevoDolares: redondear(itemsNuevos.reduce((a: number, i: any) => a + i.pVenta * i.qty, 0))
     };
   })();
 
@@ -948,12 +984,12 @@ export function FinancialDashboard(props: any) {
   const liqDolares = aDolares(metodoLiq, liqMontoNum);
 
   const validarDevolucion = (): string | null => {
-    if (!ventaDev || !itemDev) return "Selecciona la venta y el producto.";
-    if (qtyDevNum < 1 || qtyDevNum > itemDev.qty) return `La cantidad a devolver debe estar entre 1 y ${itemDev.qty}.`;
+    if (!ventaDev) return "Selecciona la venta.";
+    if (itemsDevSel.length === 0) return "Selecciona al menos un producto a devolver.";
     if (tipoDevolucion === "cambio") {
-      if (!productoCambio) return "Selecciona el producto de reemplazo.";
-      if (qtyCambioNum < 1) return "Indica la cantidad del producto nuevo.";
-      if (qtyCambioNum > stockDisponibleCambio) return "No hay suficiente stock del producto nuevo.";
+      if (lineasCambio.length === 0) return "Agrega al menos un producto de reemplazo.";
+      const sinStock = Object.keys(nuevoPorId).find((id) => nuevoPorId[id] > stockDisponibleCambio(id));
+      if (sinStock) return `No hay suficiente stock de ${products.find((p) => p.id === sinStock)?.nombre || "un producto nuevo"}.`;
     }
     if (liquidaAhora) {
       if (liqMontoNum <= 0) return saldoDev < 0 ? "Indica el monto a entregar al cliente." : "Indica el monto que paga el cliente.";
@@ -969,45 +1005,72 @@ export function FinancialDashboard(props: any) {
     setModalDevolucionOpen(false);
     setBusquedaVentaDev("");
     setVentaDevId(null);
-    setIndiceItemDev(null);
-    setCantidadDevolver("1");
+    setDevSel({});
     setTipoDevolucion("devolucion");
-    setProductoCambioId("");
-    setCantidadCambio("1");
+    setCambioNuevos([]);
     setMetodoLiq("Efectivo");
     setMontoLiqManual("");
     setRefLiq("");
     setComisionDevolucion("");
   };
 
-  const cambiarCantidadDevolver = (delta: number) => {
-    if (!itemDev) return;
-    const n = Math.min(itemDev.qty, Math.max(1, (qtyDevNum || 1) + delta));
-    setCantidadDevolver(String(n));
+  const alternarItemDev = (idx: number) => {
+    setDevSel((prev) => {
+      const n = { ...prev };
+      if (n[idx]) delete n[idx];
+      else n[idx] = 1;
+      return n;
+    });
     setMontoLiqManual("");
   };
 
-  const cambiarCantidadCambio = (delta: number) => {
-    const n = Math.max(1, Math.min(stockDisponibleCambio || 1, (qtyCambioNum || 1) + delta));
-    setCantidadCambio(String(n));
+  const cambiarCantidadDevolver = (idx: number, delta: number) => {
+    if (!ventaDev) return;
+    const max = ventaDev.items[idx]?.qty || 1;
+    setDevSel((prev) => ({ ...prev, [idx]: Math.min(max, Math.max(1, (prev[idx] || 1) + delta)) }));
+    setMontoLiqManual("");
+  };
+
+  const agregarProductoCambio = (id: string) => {
+    if (!id) return;
+    setCambioNuevos((prev) => {
+      const ex = prev.find((l) => l.id === id);
+      if (ex) return prev.map((l) => (l.id === id ? { ...l, qty: l.qty + 1 } : l));
+      return [...prev, { id, qty: 1 }];
+    });
+    setMontoLiqManual("");
+  };
+
+  const cambiarCantidadCambio = (id: string, delta: number) => {
+    setCambioNuevos((prev) =>
+      prev.flatMap((l) => {
+        if (l.id !== id) return [l];
+        const n = l.qty + delta;
+        return n < 1 ? [] : [{ ...l, qty: n }];
+      })
+    );
     setMontoLiqManual("");
   };
 
   const procesarDevolucionOCambio = async () => {
-    if (guardandoDevolucionState || validarDevolucion() || !ventaDev || !itemDev || !calcDev) return;
+    if (guardandoDevolucionState || validarDevolucion() || !ventaDev || !calcDev) return;
     setGuardandoDevolucionState(true);
 
     try {
       const fecha = new Date().toISOString();
       const batch = writeBatch(db);
 
-      // Stock: vuelve lo devuelto y sale lo entregado en el cambio
-      if (products.some((p) => p.id === itemDev.id)) {
-        batch.update(doc(db, COLLECTION_INVENTARIO, itemDev.id), { cantidad: increment(qtyDevNum) });
+      // Stock: vuelve lo devuelto y sale lo entregado en el cambio (un solo ajuste por producto)
+      const deltaStock: Record<string, number> = {};
+      Object.entries(devueltoPorId).forEach(([id, q]) => { deltaStock[id] = (deltaStock[id] || 0) + q; });
+      if (tipoDevolucion === "cambio") {
+        Object.entries(nuevoPorId).forEach(([id, q]) => { deltaStock[id] = (deltaStock[id] || 0) - q; });
       }
-      if (tipoDevolucion === "cambio" && productoCambio && calcDev.itemNuevo) {
-        batch.update(doc(db, COLLECTION_INVENTARIO, productoCambio.id), { cantidad: increment(-qtyCambioNum) });
-      }
+      Object.entries(deltaStock).forEach(([id, d]) => {
+        if (d !== 0 && products.some((p) => p.id === id)) {
+          batch.update(doc(db, COLLECTION_INVENTARIO, id), { cantidad: increment(d) });
+        }
+      });
 
       // Pagos: si hay dinero que entregar o cobrar, queda registrado dentro de la venta
       let pagos = obtenerPagosVenta(ventaDev);
@@ -1057,20 +1120,28 @@ export function FinancialDashboard(props: any) {
         devuelta: ventaAnulada
       });
 
+      const itemsDevueltos = itemsDevSel.map((x) => ({ nombre: x.item.nombre, codigo: x.item.codigo || "", qty: x.qty }));
+      const itemsNuevosReg = tipoDevolucion === "cambio"
+        ? lineasCambio.map((l) => ({ nombre: l.producto.nombre, codigo: l.producto.codigo || "", qty: l.qty }))
+        : [];
+      const txt = (arr: { nombre: string; qty: number }[]) => arr.map((i) => `${i.qty}x ${i.nombre}`).join(", ");
+
       const detalleOperacion =
         tipoDevolucion === "devolucion"
-          ? (ventaAnulada ? `Devolución de ${qtyDevNum}x ${itemDev.nombre} (venta devuelta por completo)` : `Devolución parcial de ${qtyDevNum}x ${itemDev.nombre}`)
-          : `Cambio de ${qtyDevNum}x [${itemDev.nombre}] por ${qtyCambioNum}x [${productoCambio?.nombre}]`;
+          ? (ventaAnulada ? `Devolución de ${txt(itemsDevueltos)} (venta devuelta por completo)` : `Devolución parcial de ${txt(itemsDevueltos)}`)
+          : `Cambio de [${txt(itemsDevueltos)}] por [${txt(itemsNuevosReg)}]`;
 
       batch.set(doc(collection(db, COLLECTION_DEVOLUCIONES)), {
         fecha,
         ventaId: ventaDev.id,
         tipo: tipoDevolucion,
         detalle: detalleOperacion,
-        productoDevuelto: itemDev.nombre,
-        cantidadDevuelta: qtyDevNum,
-        productoNuevo: productoCambio && tipoDevolucion === "cambio" ? productoCambio.nombre : "N/A",
-        cantidadNueva: tipoDevolucion === "cambio" ? qtyCambioNum : 0,
+        productoDevuelto: txt(itemsDevueltos),
+        cantidadDevuelta: itemsDevueltos.reduce((a, i) => a + i.qty, 0),
+        productoNuevo: tipoDevolucion === "cambio" ? txt(itemsNuevosReg) : "N/A",
+        cantidadNueva: itemsNuevosReg.reduce((a, i) => a + i.qty, 0),
+        itemsDevueltos,
+        itemsNuevos: itemsNuevosReg,
         diferenciaDolares: saldoDev,
         liquidacion,
         montoReembolsoBs: liquidacion && liquidacion.sentido === "entregar" ? liquidacion.montoBs : 0,
@@ -1083,6 +1154,209 @@ export function FinancialDashboard(props: any) {
       console.error("Error al procesar devolución:", e);
     } finally {
       setTimeout(() => setGuardandoDevolucionState(false), 2000);
+    }
+  };
+
+  // --- EDITAR VENTA ---
+  const ventaEdit = sales.find((s: any) => s.id === editVentaId) || null;
+
+  const origQtyPorId: Record<string, number> = {};
+  (ventaEdit ? ventaEdit.items : []).forEach((i: any) => { origQtyPorId[i.id] = (origQtyPorId[i.id] || 0) + i.qty; });
+  const editQtyPorId: Record<string, number> = {};
+  editItems.forEach((i: any) => { editQtyPorId[i.id] = (editQtyPorId[i.id] || 0) + i.qty; });
+  // Stock disponible para la venta editada: lo que hay en inventario más lo que esta venta ya tenía separado
+  const stockDisponibleEdit = (id: string) => {
+    const p = products.find((pr) => pr.id === id);
+    return (p ? p.cantidad : 0) + (origQtyPorId[id] || 0);
+  };
+
+  const calcEdit = (() => {
+    if (!ventaEdit) return null;
+    const { factorD, factorBs } = factoresVenta(ventaEdit);
+    const sumD = editItems.reduce((a: number, i: any) => a + i.pVenta * i.qty, 0);
+    const sumBs = editItems.reduce((a: number, i: any) => a + i.pFinalBs * i.qty, 0);
+    const calcD = redondear(sumD * factorD);
+    const calcBs = redondear(sumBs * factorBs);
+    const edD = editTotal ? parseFloat(editTotal.d) : NaN;
+    const edBs = editTotal ? parseFloat(editTotal.bs) : NaN;
+    const hayTotalEdit = editItems.length > 0 && !isNaN(edD) && !isNaN(edBs) && edD > 0 && edBs > 0;
+    const totalD = hayTotalEdit ? redondear(edD) : calcD;
+    const totalBs = hayTotalEdit ? redondear(edBs) : calcBs;
+    const pagadoPrevio = sumaDolares(obtenerPagosVenta(ventaEdit));
+    // saldo > 0: el cliente debe pagar. saldo < 0: el negocio debe devolver dinero.
+    const saldo = redondear(totalD - pagadoPrevio);
+    return { sumD, sumBs, calcD, calcBs, hayTotalEdit, totalD, totalBs, pagadoPrevio, saldo };
+  })();
+
+  const editarTotalEditDolares = (v: string) => {
+    const n = parseFloat(v);
+    setEditTotal({ d: v, bs: !isNaN(n) && n > 0 ? (n * tasaBcvSegura).toFixed(2) : "" });
+  };
+  const editarTotalEditBs = (v: string) => {
+    const n = parseFloat(v);
+    setEditTotal({ bs: v, d: !isNaN(n) && n > 0 ? (n / tasaBcvSegura).toFixed(2) : "" });
+  };
+
+  const saldoEd = calcEdit ? calcEdit.saldo : 0;
+  const esPendienteEd = !!(ventaEdit && ventaEdit.pendiente);
+  const liqAhoraEd = !!calcEdit && (saldoEd < -TOLERANCIA || (saldoEd > TOLERANCIA && !esPendienteEd));
+  const liqAutoEd = liqAhoraEd
+    ? (editMetodoLiq === "Divisas" ? Math.abs(saldoEd) : Math.abs(saldoEd) * tasaBcvSegura)
+    : 0;
+  const liqMontoEd = editMontoLiq !== "" ? (parseFloat(editMontoLiq) || 0) : liqAutoEd;
+  const liqDolaresEd = aDolares(editMetodoLiq, liqMontoEd);
+
+  const itemsEditIguales = !!ventaEdit
+    && editItems.length === ventaEdit.items.length
+    && editItems.every((it: any, i: number) => {
+      const o = ventaEdit.items[i];
+      return o && it.id === o.id && it.qty === o.qty && it.pVenta === o.pVenta && it.pFinalBs === o.pFinalBs;
+    });
+
+  const validarEdicion = (): string | null => {
+    if (!ventaEdit || !calcEdit) return "Venta no encontrada.";
+    if (editItems.length === 0) return "La venta debe tener al menos un producto. Para devolver todo usa Devoluciones.";
+    const sinStock = Object.keys(editQtyPorId).find((id) => editQtyPorId[id] > stockDisponibleEdit(id));
+    if (sinStock) return `No hay suficiente stock de ${editItems.find((i: any) => i.id === sinStock)?.nombre || "un producto"}.`;
+    if (calcEdit.totalD <= 0 || calcEdit.totalBs <= 0) return "El total debe ser mayor a 0.";
+    if (
+      itemsEditIguales &&
+      Math.abs(calcEdit.totalD - ventaEdit.totalDolares) < 0.005 &&
+      Math.abs(calcEdit.totalBs - ventaEdit.totalBs) < 0.005
+    ) return "No hay cambios para guardar.";
+    if (liqAhoraEd) {
+      if (liqMontoEd <= 0) return saldoEd < 0 ? "Indica el monto a entregar al cliente." : "Indica el monto que paga el cliente.";
+      if (necesitaReferencia(editMetodoLiq) && editRefLiq.length !== 4) return "Ingresa los 4 últimos dígitos de la referencia.";
+      if (saldoEd > 0 && liqDolaresEd < saldoEd - TOLERANCIA) return `El cliente debe pagar ${fmtDolaresYBs(saldoEd)}.`;
+      if (saldoEd < 0 && liqDolaresEd > -saldoEd + TOLERANCIA) return `No puedes entregar más de ${fmtDolaresYBs(-saldoEd)}.`;
+    }
+    return null;
+  };
+  const errorEdicion = validarEdicion();
+
+  const abrirEditarVenta = (sale: any) => {
+    setEditVentaId(sale.id);
+    setEditItems(sale.items.map((i: any) => ({ ...i })));
+    setEditTotal(null);
+    setEditBusqueda("");
+    setEditMetodoLiq("Efectivo");
+    setEditMontoLiq("");
+    setEditRefLiq("");
+  };
+
+  const cerrarEditarVenta = () => {
+    setEditVentaId(null);
+    setEditItems([]);
+    setEditTotal(null);
+    setEditBusqueda("");
+    setEditMetodoLiq("Efectivo");
+    setEditMontoLiq("");
+    setEditRefLiq("");
+  };
+
+  const agregarProductoEdit = (prod: any) => {
+    if ((editQtyPorId[prod.id] || 0) + 1 > stockDisponibleEdit(prod.id)) return;
+    const c = calcularPrecios(prod.pCompra);
+    setEditItems((prev) => {
+      const i = prev.findIndex((it: any) => it.id === prod.id && it.pVenta === c.pVenta && it.pFinalBs === c.pFinalBs);
+      if (i >= 0) return prev.map((it: any, k: number) => (k === i ? { ...it, qty: it.qty + 1 } : it));
+      return [...prev, { ...prod, pVenta: c.pVenta, pFinalBs: c.pFinalBs, qty: 1 }];
+    });
+    setEditMontoLiq("");
+  };
+
+  const cambiarCantidadEdit = (idx: number, delta: number) => {
+    const item = editItems[idx];
+    if (!item) return;
+    if (delta > 0 && (editQtyPorId[item.id] || 0) + 1 > stockDisponibleEdit(item.id)) return;
+    setEditItems((prev) => prev.map((it: any, k: number) => (k === idx ? { ...it, qty: Math.max(1, it.qty + delta) } : it)));
+    setEditMontoLiq("");
+  };
+
+  const quitarItemEdit = (idx: number) => {
+    setEditItems((prev) => prev.filter((_: any, k: number) => k !== idx));
+    setEditMontoLiq("");
+  };
+
+  const guardarEdicionVenta = async () => {
+    if (guardandoEdicion || validarEdicion() || !ventaEdit || !calcEdit) return;
+    setGuardandoEdicion(true);
+    try {
+      const fecha = new Date().toISOString();
+      const batch = writeBatch(db);
+
+      // Stock: lo que se quita vuelve al inventario y lo que se agrega se descuenta
+      const ids = Array.from(new Set([...Object.keys(origQtyPorId), ...Object.keys(editQtyPorId)]));
+      ids.forEach((id) => {
+        const d = (origQtyPorId[id] || 0) - (editQtyPorId[id] || 0);
+        if (d !== 0 && products.some((p) => p.id === id)) {
+          batch.update(doc(db, COLLECTION_INVENTARIO, id), { cantidad: increment(d) });
+        }
+      });
+
+      // Pagos: la diferencia de dinero (a favor o en contra) queda registrada en la venta y en la caja
+      let pagos = obtenerPagosVenta(ventaEdit);
+      if (liqAhoraEd) {
+        const signo = saldoEd < 0 ? -1 : 1;
+        pagos = [
+          ...pagos,
+          {
+            fecha,
+            tipo: "edicion",
+            metodo: editMetodoLiq,
+            monto: signo * redondear(liqMontoEd),
+            montoDolares: signo * redondear(liqDolaresEd),
+            referencia: necesitaReferencia(editMetodoLiq) ? editRefLiq : ""
+          }
+        ];
+      }
+
+      // Estado de pendiente de la venta
+      let pendiente = !!ventaEdit.pendiente;
+      let montoPendiente = ventaEdit.montoPendiente || 0;
+      if (ventaEdit.pendiente) {
+        if (saldoEd > TOLERANCIA) {
+          montoPendiente = saldoEd;
+        } else {
+          pendiente = false;
+          montoPendiente = 0;
+        }
+      }
+
+      const textoItems = (arr: any[]) => arr.map((i: any) => `${i.qty}x ${i.nombre}`).join(", ");
+      const registroEdicion = {
+        fecha,
+        totalAntesDolares: ventaEdit.totalDolares,
+        totalAntesBs: ventaEdit.totalBs,
+        totalDespuesDolares: calcEdit.totalD,
+        totalDespuesBs: calcEdit.totalBs,
+        itemsAntes: textoItems(ventaEdit.items),
+        itemsDespues: textoItems(editItems),
+        saldoDolares: saldoEd
+      };
+
+      batch.update(doc(db, COLLECTION_VENTAS, ventaEdit.id), {
+        items: editItems,
+        totalDolares: calcEdit.totalD,
+        totalBs: calcEdit.totalBs,
+        precioOriginalDolares: redondear(calcEdit.sumD),
+        precioOriginalBs: redondear(calcEdit.sumBs),
+        pagos,
+        metodoPago: resumenMetodos(pagos) || "Pendiente",
+        referencia: resumenReferencias(pagos),
+        pendiente,
+        montoPendiente: redondear(montoPendiente),
+        editada: true,
+        fechaEdicion: fecha,
+        ediciones: [...(ventaEdit.ediciones || []), registroEdicion]
+      });
+
+      await batch.commit();
+      cerrarEditarVenta();
+    } catch (e: any) {
+      console.error("Error al editar la venta:", e);
+    } finally {
+      setGuardandoEdicion(false);
     }
   };
 
@@ -1832,6 +2106,11 @@ export function FinancialDashboard(props: any) {
                             )}
                           </div>
                           <p className="text-xs text-gray-400 mt-2">{new Date(sale.fecha).toLocaleString()} (ID: {sale.id.slice(0, 8)})</p>
+                          {sale.editada && (
+                            <p className="text-[11px] text-blue-700 font-bold mt-1">
+                              Venta editada{sale.fechaEdicion ? `: ${new Date(sale.fechaEdicion).toLocaleString()}` : ""}
+                            </p>
+                          )}
                           {Array.isArray(sale.pagos) && sale.pagos.length > 1 && (
                             <p className="text-[11px] text-gray-500 mt-1">
                               {sale.pagos.map((p: any) => `${p.metodo}: ${fmtPago(p)}`).join(" · ")}
@@ -1853,6 +2132,14 @@ export function FinancialDashboard(props: any) {
                         <div className="text-right">
                           <p className="text-lg font-black text-emerald-600">${sale.totalDolares.toFixed(2)}</p>
                           <p className="text-xs font-bold text-gray-500">{fmtBs(sale.totalBs)} BS</p>
+                          {sale.items.length > 0 && (
+                            <button
+                              onClick={() => abrirEditarVenta(sale)}
+                              className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-lg transition cursor-pointer"
+                            >
+                              <Edit className="w-3.5 h-3.5" /> Editar venta
+                            </button>
+                          )}
                         </div>
                       </div>
 
@@ -1975,8 +2262,8 @@ export function FinancialDashboard(props: any) {
                       </div>
                       <div className="text-xs space-y-1 text-gray-700">
                         <p><strong>Detalle:</strong> {dev.detalle}</p>
-                        <p><strong>Producto devuelto:</strong> {dev.cantidadDevuelta ? `${dev.cantidadDevuelta}x ` : ""}{dev.productoDevuelto}</p>
-                        {dev.tipo === "cambio" && <p><strong>Producto de cambio:</strong> {dev.cantidadNueva ? `${dev.cantidadNueva}x ` : ""}{dev.productoNuevo}</p>}
+                        <p><strong>{dev.itemsDevueltos ? "Productos devueltos:" : "Producto devuelto:"}</strong> {!dev.itemsDevueltos && dev.cantidadDevuelta ? `${dev.cantidadDevuelta}x ` : ""}{dev.productoDevuelto}</p>
+                        {dev.tipo === "cambio" && <p><strong>{dev.itemsNuevos ? "Productos de cambio:" : "Producto de cambio:"}</strong> {!dev.itemsNuevos && dev.cantidadNueva ? `${dev.cantidadNueva}x ` : ""}{dev.productoNuevo}</p>}
                         {typeof dev.diferenciaDolares === "number" && dev.tipo === "cambio" && (
                           <p>
                             <strong>Diferencia:</strong>{" "}
@@ -2519,10 +2806,10 @@ export function FinancialDashboard(props: any) {
                 </div>
                 <div>
                   <h3 className="text-xl font-black text-gray-900">Procesar Devolución / Cambio</h3>
-                  <p className="text-xs text-gray-500">Selecciona la venta, el producto y la cantidad afectada</p>
+                  <p className="text-xs text-gray-500">Selecciona la venta, los productos y la cantidad afectada</p>
                 </div>
               </div>
-              <button 
+              <button
                 onClick={cerrarModalDevolucion}
                 className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition cursor-pointer"
               >
@@ -2535,8 +2822,8 @@ export function FinancialDashboard(props: any) {
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">1. Buscar venta realizada</label>
                 <div className="relative">
                   <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     value={busquedaVentaDev}
                     onChange={(e) => setBusquedaVentaDev(e.target.value)}
                     placeholder="Buscar por ID de venta o nombre del repuesto..."
@@ -2546,9 +2833,9 @@ export function FinancialDashboard(props: any) {
 
                 {busquedaVentaDev.trim() !== "" && !ventaDev && (
                   <div className="mt-2 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto divide-y divide-gray-100">
-                    {sales.filter(s => 
+                    {sales.filter(s =>
                       s.items.length > 0 && (
-                        s.id.toLowerCase().includes(busquedaVentaDev.toLowerCase()) || 
+                        s.id.toLowerCase().includes(busquedaVentaDev.toLowerCase()) ||
                         s.items.some((i: any) => i.nombre.toLowerCase().includes(busquedaVentaDev.toLowerCase()))
                       )
                     ).map(sale => (
@@ -2557,8 +2844,8 @@ export function FinancialDashboard(props: any) {
                           <p className="font-bold text-gray-900 text-xs">Venta ID: {sale.id.slice(0, 10)} | Fecha: {new Date(sale.fecha).toLocaleString()}</p>
                           <p className="text-[11px] text-gray-500">{sale.items.map((i: any) => `${i.qty}x ${i.nombre}`).join(", ")}</p>
                         </div>
-                        <Button 
-                          onClick={() => { setVentaDevId(sale.id); setBusquedaVentaDev(""); setIndiceItemDev(null); setMontoLiqManual(""); }}
+                        <Button
+                          onClick={() => { setVentaDevId(sale.id); setBusquedaVentaDev(""); setDevSel({}); setCambioNuevos([]); setMontoLiqManual(""); }}
                           size="sm"
                           className="bg-amber-600 hover:bg-amber-700 text-white text-xs cursor-pointer"
                         >
@@ -2580,52 +2867,60 @@ export function FinancialDashboard(props: any) {
                         <p className="text-[11px] text-amber-700 font-bold mt-0.5">Esta venta tiene un pago pendiente de ${(ventaDev.montoPendiente || 0).toFixed(2)}</p>
                       )}
                     </div>
-                    <button onClick={() => { setVentaDevId(null); setIndiceItemDev(null); setMontoLiqManual(""); }} className="text-xs text-red-600 font-bold hover:underline cursor-pointer">Cambiar venta</button>
+                    <button onClick={() => { setVentaDevId(null); setDevSel({}); setCambioNuevos([]); setMontoLiqManual(""); }} className="text-xs text-red-600 font-bold hover:underline cursor-pointer">Cambiar venta</button>
                   </div>
-                  <p className="text-xs font-bold text-gray-600 uppercase">2. Selecciona el producto que se devuelve (uno solo):</p>
+                  <p className="text-xs font-bold text-gray-600 uppercase">2. Selecciona los productos que se devuelven (puedes elegir varios):</p>
                   <div className="space-y-2">
-                    {ventaDev.items.map((item: any, idx: number) => (
-                      <div 
-                        key={idx} 
-                        onClick={() => {
-                          setIndiceItemDev(idx);
-                          setCantidadDevolver("1");
-                          setMontoLiqManual("");
-                        }}
-                        className={cn(
-                          "p-3 rounded-xl border flex justify-between items-center cursor-pointer transition",
-                          indiceItemDev === idx ? "bg-amber-600 text-white border-amber-600 font-bold" : "bg-white text-gray-800 border-gray-200 hover:bg-gray-50"
-                        )}
-                      >
-                        <span>{item.qty}x {item.nombre}</span>
-                        <span>${(item.pVenta * item.qty).toFixed(2)} · {fmtBs(item.pFinalBs * item.qty)} BS</span>
-                      </div>
-                    ))}
+                    {ventaDev.items.map((item: any, idx: number) => {
+                      const sel = devSel[idx] ? Math.min(item.qty, devSel[idx]) : 0;
+                      return (
+                        <div
+                          key={idx}
+                          className={cn(
+                            "p-3 rounded-xl border transition",
+                            sel > 0 ? "bg-amber-50 border-amber-400" : "bg-white border-gray-200 hover:bg-gray-50"
+                          )}
+                        >
+                          <div onClick={() => alternarItemDev(idx)} className="flex justify-between items-center gap-3 cursor-pointer">
+                            <div className="flex items-center gap-3">
+                              <input type="checkbox" readOnly checked={sel > 0} className="w-4 h-4 accent-amber-600 cursor-pointer" />
+                              <div>
+                                <p className="text-sm font-bold text-gray-800">{item.qty}x {item.nombre}</p>
+                                {item.codigo && <p className="text-[11px] font-mono text-gray-500">Código: {item.codigo}</p>}
+                              </div>
+                            </div>
+                            <span className="text-xs text-gray-600 text-right">${(item.pVenta * item.qty).toFixed(2)} · {fmtBs(item.pFinalBs * item.qty)} BS</span>
+                          </div>
+                          {sel > 0 && (
+                            <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-amber-200">
+                              <p className="text-xs font-bold text-gray-700">
+                                Unidades a devolver
+                                <span className="font-normal text-gray-500"> (${item.pVenta.toFixed(2)} c/u · {fmtBs(item.pFinalBs)} BS)</span>
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <button type="button" onClick={() => cambiarCantidadDevolver(idx, -1)} className="p-1.5 border border-gray-200 rounded-lg text-gray-600 bg-white hover:bg-gray-50 cursor-pointer">
+                                  <Minus className="w-4 h-4" />
+                                </button>
+                                <span className="w-8 text-center text-sm font-black text-gray-900">{sel}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => cambiarCantidadDevolver(idx, 1)}
+                                  disabled={sel >= item.qty}
+                                  className="p-1.5 border border-gray-200 rounded-lg text-gray-600 bg-white hover:bg-gray-50 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  <Plus className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-
-                  {itemDev && (
-                    <div className="flex items-center justify-between gap-3 bg-white rounded-xl border border-gray-200 p-3">
-                      <div>
-                        <p className="text-xs font-bold text-gray-700">Unidades a devolver</p>
-                        <p className="text-[11px] text-gray-500">
-                          Compró {itemDev.qty} · ${itemDev.pVenta.toFixed(2)} c/u ({fmtBs(itemDev.pFinalBs)} BS)
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button type="button" onClick={() => cambiarCantidadDevolver(-1)} className="p-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 cursor-pointer">
-                          <Minus className="w-4 h-4" />
-                        </button>
-                        <span className="w-8 text-center text-sm font-black text-gray-900">{qtyDevNum || 1}</span>
-                        <button type="button" onClick={() => cambiarCantidadDevolver(1)} className="p-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 cursor-pointer">
-                          <Plus className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
 
-              {itemDev && (
+              {itemsDevSel.length > 0 && (
                 <div className="space-y-4 pt-2 border-t border-gray-100">
                   <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">3. Tipo de Operación</label>
@@ -2642,7 +2937,7 @@ export function FinancialDashboard(props: any) {
                         onClick={() => { setTipoDevolucion("cambio"); setMontoLiqManual(""); }}
                         className={cn("py-2.5 px-3 text-xs font-bold rounded-xl border transition cursor-pointer text-center", tipoDevolucion === "cambio" ? "bg-amber-600 text-white border-amber-600 shadow-sm" : "bg-white text-gray-700 border-gray-200")}
                       >
-                        Cambio por otro producto
+                        Cambio por otros productos
                       </button>
                     </div>
                   </div>
@@ -2650,56 +2945,64 @@ export function FinancialDashboard(props: any) {
                   {tipoDevolucion === "cambio" && (
                     <div className="space-y-3">
                       <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Selecciona el producto nuevo de reemplazo</label>
-                        <select 
-                          value={productoCambioId}
-                          onChange={(e) => { setProductoCambioId(e.target.value); setCantidadCambio("1"); setMontoLiqManual(""); }}
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Agrega los productos nuevos de reemplazo</label>
+                        <select
+                          value=""
+                          onChange={(e) => agregarProductoCambio(e.target.value)}
                           className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                         >
                           <option value="">-- Elige un producto del inventario --</option>
                           {[...products]
-                            .filter((p) => p.cantidad > 0 || p.id === itemDev.id)
+                            .filter((p) => p.cantidad > 0 || devueltoPorId[p.id])
                             .sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" }))
                             .map((p) => (
                               <option key={p.id} value={p.id}>
-                                {p.nombre} (Stock: {p.cantidad}) · ${calcularPrecios(p.pCompra).pVenta.toFixed(2)}
+                                {p.codigo} · {p.nombre} (Stock: {p.cantidad}) · ${calcularPrecios(p.pCompra).pVenta.toFixed(2)}
                               </option>
                             ))}
                         </select>
                       </div>
-                      {productoCambio && (
-                        <div className="flex items-center justify-between gap-3 bg-gray-50 rounded-xl border border-gray-200 p-3">
-                          <div>
-                            <p className="text-xs font-bold text-gray-700">Unidades del producto nuevo</p>
-                            <p className="text-[11px] text-gray-500">
-                              ${calcularPrecios(productoCambio.pCompra).pVenta.toFixed(2)} c/u ({fmtBs(calcularPrecios(productoCambio.pCompra).pFinalBs)} BS)
-                            </p>
+
+                      {lineasCambio.map((l) => {
+                        const c = calcularPrecios(l.producto.pCompra);
+                        return (
+                          <div key={l.id} className="flex items-center justify-between gap-3 bg-gray-50 rounded-xl border border-gray-200 p-3">
+                            <div>
+                              <p className="text-xs font-bold text-gray-800">{l.producto.nombre}</p>
+                              <p className="text-[11px] font-mono text-gray-500">Código: {l.producto.codigo}</p>
+                              <p className="text-[11px] text-gray-500">${c.pVenta.toFixed(2)} c/u ({fmtBs(c.pFinalBs)} BS)</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button type="button" onClick={() => cambiarCantidadCambio(l.id, -1)} className="p-1.5 border border-gray-200 rounded-lg text-gray-600 bg-white hover:bg-gray-50 cursor-pointer" title={l.qty === 1 ? "Quitar" : "Restar"}>
+                                {l.qty === 1 ? <Trash2 className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
+                              </button>
+                              <span className="w-8 text-center text-sm font-black text-gray-900">{l.qty}</span>
+                              <button
+                                type="button"
+                                onClick={() => cambiarCantidadCambio(l.id, 1)}
+                                disabled={l.qty >= stockDisponibleCambio(l.id)}
+                                className="p-1.5 border border-gray-200 rounded-lg text-gray-600 bg-white hover:bg-gray-50 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <button type="button" onClick={() => cambiarCantidadCambio(-1)} className="p-1.5 border border-gray-200 rounded-lg text-gray-600 bg-white hover:bg-gray-50 cursor-pointer">
-                              <Minus className="w-4 h-4" />
-                            </button>
-                            <span className="w-8 text-center text-sm font-black text-gray-900">{qtyCambioNum || 1}</span>
-                            <button type="button" onClick={() => cambiarCantidadCambio(1)} className="p-1.5 border border-gray-200 rounded-lg text-gray-600 bg-white hover:bg-gray-50 cursor-pointer">
-                              <Plus className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                        );
+                      })}
                     </div>
                   )}
 
                   {/* RESUMEN: quién le debe a quién */}
-                  {calcDev && (tipoDevolucion === "devolucion" || (productoCambio && qtyCambioNum > 0)) && (
+                  {calcDev && (tipoDevolucion === "devolucion" || lineasCambio.length > 0) && (
                     <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-3">
                       <div className="space-y-1.5 text-xs">
                         <div className="flex justify-between gap-3">
-                          <span className="font-bold text-gray-500 uppercase">Producto que devuelve</span>
+                          <span className="font-bold text-gray-500 uppercase">Productos que devuelve</span>
                           <span className="font-bold text-gray-800">${calcDev.valorDevueltoDolares.toFixed(2)} · {fmtBs(calcDev.valorDevueltoDolares * tasaBcvSegura)} BS</span>
                         </div>
                         {tipoDevolucion === "cambio" && (
                           <div className="flex justify-between gap-3">
-                            <span className="font-bold text-gray-500 uppercase">Producto nuevo</span>
+                            <span className="font-bold text-gray-500 uppercase">Productos nuevos</span>
                             <span className="font-bold text-gray-800">${calcDev.valorNuevoDolares.toFixed(2)} · {fmtBs(calcDev.valorNuevoDolares * tasaBcvSegura)} BS</span>
                           </div>
                         )}
@@ -2788,8 +3091,8 @@ export function FinancialDashboard(props: any) {
 
                   <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Comisión / Nota</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       value={comisionDevolucion}
                       onChange={(e) => setComisionDevolucion(e.target.value)}
                       placeholder="Ej: 5% por reposición"
@@ -2799,7 +3102,7 @@ export function FinancialDashboard(props: any) {
                 </div>
               )}
 
-              {errorDevolucion && itemDev && (
+              {errorDevolucion && itemsDevSel.length > 0 && (
                 <p className="text-xs font-bold text-amber-700 text-right">{errorDevolucion}</p>
               )}
 
@@ -2819,6 +3122,267 @@ export function FinancialDashboard(props: any) {
                   {guardandoDevolucionState ? "Procesando..." : "Confirmar Devolución"}
                 </Button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDITAR VENTA */}
+      {ventaEdit && calcEdit && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto space-y-5">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-blue-50 text-blue-700 rounded-xl">
+                  <Edit className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-gray-900">Editar venta</h3>
+                  <p className="text-xs text-gray-500">{new Date(ventaEdit.fecha).toLocaleString()} (ID: {ventaEdit.id.slice(0, 8)})</p>
+                </div>
+              </div>
+              <button
+                onClick={cerrarEditarVenta}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {ventaEdit.pendiente && (
+              <p className="text-[11px] text-amber-700 font-bold">Esta venta tiene un pago pendiente de ${(ventaEdit.montoPendiente || 0).toFixed(2)} ({ventaEdit.cliente || "sin nombre"}).</p>
+            )}
+
+            {/* Productos de la venta */}
+            <div className="space-y-2">
+              <p className="text-xs font-bold text-gray-500 uppercase">Productos de la venta:</p>
+              {editItems.length > 0 ? (
+                <div className="space-y-2">
+                  {editItems.map((item: any, idx: number) => (
+                    <div key={idx} className="flex justify-between items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                      <div>
+                        <p className="font-bold text-gray-900 text-sm">{item.nombre}</p>
+                        {item.codigo && <p className="text-[11px] font-mono font-bold text-gray-500">Código: {item.codigo}</p>}
+                        <p className="text-xs text-gray-500">${item.pVenta} c/u ({fmtBs(item.pFinalBs)} BS)</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2 bg-white border border-gray-200 px-2 py-1 rounded-lg">
+                          <button onClick={() => cambiarCantidadEdit(idx, -1)} disabled={item.qty <= 1} className="text-gray-500 font-bold px-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">-</button>
+                          <span className="text-xs font-bold w-4 text-center">{item.qty}</span>
+                          <button
+                            onClick={() => cambiarCantidadEdit(idx, 1)}
+                            disabled={(editQtyPorId[item.id] || 0) >= stockDisponibleEdit(item.id)}
+                            className="text-gray-500 font-bold px-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            +
+                          </button>
+                        </div>
+                        <span className="font-bold text-emerald-600 text-sm w-16 text-right">${(item.pVenta * item.qty).toFixed(2)}</span>
+                        <button onClick={() => quitarItemEdit(idx)} className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer" title="Quitar de la venta">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-red-600 font-bold py-3 text-center border border-dashed border-red-200 rounded-xl">
+                  La venta no puede quedar sin productos. Agrega uno, o usa Devoluciones para devolverla completa.
+                </p>
+              )}
+            </div>
+
+            {/* Agregar / reemplazar productos */}
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Agregar otro producto (para reemplazar uno, quita el anterior y agrega el nuevo)</label>
+              <div className="relative">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
+                <input
+                  type="text"
+                  value={editBusqueda}
+                  onChange={(e) => setEditBusqueda(e.target.value)}
+                  placeholder="Escribe el nombre o código del repuesto..."
+                  className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              {editBusqueda.trim() !== "" && (
+                <div className="mt-2 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto divide-y divide-gray-100">
+                  {products
+                    .filter((p) => p.nombre.toLowerCase().includes(editBusqueda.toLowerCase()) || p.codigo.toLowerCase().includes(editBusqueda.toLowerCase()))
+                    .map((prod) => {
+                      const calc = calcularPrecios(prod.pCompra);
+                      const libre = stockDisponibleEdit(prod.id) - (editQtyPorId[prod.id] || 0);
+                      return (
+                        <div key={prod.id} className="p-3 flex justify-between items-center hover:bg-gray-50">
+                          <div>
+                            <p className="font-bold text-gray-900 text-sm">{prod.nombre}</p>
+                            <p className="text-xs font-mono font-bold text-gray-600">Código: {prod.codigo}</p>
+                            <p className="text-xs text-gray-500">Stock: {libre} | Venta: ${calc.pVenta} ({fmtBs(calc.pFinalBs)} BS)</p>
+                          </div>
+                          <Button
+                            onClick={() => { agregarProductoEdit(prod); setEditBusqueda(""); }}
+                            size="sm"
+                            className="bg-blue-600 hover:bg-blue-700 text-white text-xs cursor-pointer"
+                            disabled={libre <= 0}
+                          >
+                            {libre > 0 ? "Agregar" : "Agotado"}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            {/* Total final editable */}
+            <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100 space-y-3">
+              <div className="flex justify-between items-center gap-3 text-xs font-bold text-gray-600">
+                <span>Total antes de editar:</span>
+                <span>${ventaEdit.totalDolares.toFixed(2)} · {fmtBs(ventaEdit.totalBs)} BS</span>
+              </div>
+              <div className="flex justify-between items-center gap-3 text-xs font-bold text-gray-600">
+                <span>Ya pagado por el cliente:</span>
+                <span className="text-emerald-700">${calcEdit.pagadoPrevio.toFixed(2)} · {fmtBs(calcEdit.pagadoPrevio * tasaBcvSegura)} BS</span>
+              </div>
+              <div className="flex justify-between items-center gap-3 border-t border-blue-100 pt-3">
+                <span className="text-sm font-bold text-gray-600">Nuevo total ($):</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={editTotal ? editTotal.d : (editItems.length > 0 ? calcEdit.calcD.toFixed(2) : "")}
+                  onChange={(e) => editarTotalEditDolares(e.target.value)}
+                  disabled={editItems.length === 0}
+                  placeholder={calcEdit.calcD.toFixed(2)}
+                  className="w-40 px-3 py-1.5 rounded-lg border border-blue-200 text-xl font-black text-right text-blue-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                />
+              </div>
+              <div className="flex justify-between items-center gap-3">
+                <span className="text-sm font-bold text-gray-600">Nuevo total (BS):</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={editTotal ? editTotal.bs : (editItems.length > 0 ? calcEdit.calcBs.toFixed(2) : "")}
+                  onChange={(e) => editarTotalEditBs(e.target.value)}
+                  disabled={editItems.length === 0}
+                  placeholder={calcEdit.calcBs.toFixed(2)}
+                  className="w-40 px-3 py-1.5 rounded-lg border border-blue-200 text-xl font-black text-right text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                />
+              </div>
+              {calcEdit.hayTotalEdit && (
+                <div className="flex justify-between items-center gap-3 text-[11px] font-bold text-gray-600 bg-white rounded-lg border border-blue-100 px-3 py-2">
+                  <span>Total calculado con los productos: ${calcEdit.calcD.toFixed(2)} · {fmtBs(calcEdit.calcBs)} BS</span>
+                  <button type="button" onClick={() => setEditTotal(null)} className="text-red-600 hover:underline whitespace-nowrap cursor-pointer">
+                    Restablecer
+                  </button>
+                </div>
+              )}
+
+              {/* Diferencia contra lo ya pagado */}
+              {editItems.length > 0 && (
+                <>
+                  {saldoEd < -TOLERANCIA && (
+                    <div className="p-3 rounded-xl bg-red-50 border border-red-200">
+                      <p className="text-[11px] font-black text-red-700 uppercase">Debes dar dinero al cliente</p>
+                      <p className="text-xl font-black text-red-700">${Math.abs(saldoEd).toFixed(2)}</p>
+                      <p className="text-xs font-bold text-red-600">{fmtBs(Math.abs(saldoEd) * tasaBcvSegura)} BS (tasa BCV)</p>
+                    </div>
+                  )}
+                  {saldoEd > TOLERANCIA && !esPendienteEd && (
+                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                      <p className="text-[11px] font-black text-emerald-700 uppercase">El cliente debe pagarte la diferencia</p>
+                      <p className="text-xl font-black text-emerald-700">${saldoEd.toFixed(2)}</p>
+                      <p className="text-xs font-bold text-emerald-600">{fmtBs(saldoEd * tasaBcvSegura)} BS (tasa BCV)</p>
+                    </div>
+                  )}
+                  {saldoEd > TOLERANCIA && esPendienteEd && (
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
+                      <p className="text-[11px] font-black text-amber-700 uppercase">La venta quedará con este saldo pendiente</p>
+                      <p className="text-xl font-black text-amber-700">${saldoEd.toFixed(2)}</p>
+                      <p className="text-xs font-bold text-amber-600">{fmtBs(saldoEd * tasaBcvSegura)} BS (tasa BCV)</p>
+                    </div>
+                  )}
+                  {Math.abs(saldoEd) <= TOLERANCIA && (
+                    <div className="p-3 rounded-xl bg-gray-100 border border-gray-200 text-xs font-bold text-gray-600">
+                      {esPendienteEd && (ventaEdit.montoPendiente || 0) > TOLERANCIA
+                        ? "La venta queda sin deuda pendiente. No hay dinero que mover."
+                        : "Sin diferencia: no hay dinero que entregar ni cobrar."}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {liqAhoraEd && (
+                <div className="space-y-3 pt-1">
+                  <p className="text-xs font-bold text-gray-600 uppercase">
+                    {saldoEd < 0 ? "¿Con qué le entregas el dinero?" : "¿Con qué paga la diferencia?"}
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {METODOS_PAGO.map((metodo) => (
+                      <button
+                        key={metodo}
+                        type="button"
+                        onClick={() => { setEditMetodoLiq(metodo); setEditMontoLiq(""); setEditRefLiq(""); }}
+                        className={cn(
+                          "py-2 px-3 text-xs font-bold rounded-xl border transition text-center cursor-pointer",
+                          editMetodoLiq === metodo ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+                        )}
+                      >
+                        {metodo}
+                      </button>
+                    ))}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                      Monto a {saldoEd < 0 ? "entregar" : "cobrar"} {editMetodoLiq === "Divisas" ? "($)" : "(BS)"}
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={editMontoLiq}
+                      onChange={(e) => setEditMontoLiq(e.target.value)}
+                      placeholder={liqAutoEd.toFixed(2)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      Sugerido: {editMetodoLiq === "Divisas" ? `$${liqAutoEd.toFixed(2)}` : `${fmtBs(liqAutoEd)} BS`}.
+                    </p>
+                  </div>
+                  {necesitaReferencia(editMetodoLiq) && (
+                    <input
+                      type="text"
+                      maxLength={4}
+                      value={editRefLiq}
+                      onChange={(e) => setEditRefLiq(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                      placeholder="Referencia: últimos 4 dígitos (Ej: 4829)"
+                      className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+
+            {errorEdicion && (
+              <p className="text-xs font-bold text-amber-700 text-right">{errorEdicion}</p>
+            )}
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={cerrarEditarVenta}
+                className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <Button
+                onClick={guardarEdicionVenta}
+                disabled={!!errorEdicion || guardandoEdicion}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-sm cursor-pointer"
+              >
+                {guardandoEdicion ? "Guardando..." : "Guardar cambios"}
+              </Button>
             </div>
           </div>
         </div>
