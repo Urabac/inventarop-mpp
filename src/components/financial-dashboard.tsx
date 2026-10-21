@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils";
 
 // --- CONFIGURACIÓN DE FIREBASE ---
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc, onSnapshot, writeBatch, increment } from "firebase/firestore";
+import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc, onSnapshot, writeBatch, increment, deleteField } from "firebase/firestore";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 
 const firebaseConfig = {
@@ -49,6 +49,7 @@ const COLLECTION_INVENTARIO = "motopartes_pirueta_inventario";
 const COLLECTION_VENTAS = "motopartes_pirueta_ventas";
 const COLLECTION_DEVOLUCIONES = "motopartes_pirueta_devoluciones";
 const COLLECTION_INTERCAMBIOS = "motopartes_pirueta_intercambios";
+const COLLECTION_GASTOS = "motopartes_pirueta_gastos";
 const COLLECTION_CONFIG = "motopartes_pirueta_configuracion";
 
 // --- CONSTANTES Y UTILIDADES ---
@@ -94,7 +95,21 @@ const fmtPago = (p: any) => {
 const fmtMonto = (metodo: string, monto: number) =>
   metodo === "Divisas" ? `$${(monto || 0).toFixed(2)}` : `${fmtBs(monto)} BS`;
 
-const METODOS_BS = ["Efectivo", "Pago movil", "Transferencia"];
+// Lista de pagos de un intercambio. Los intercambios guardados antes tenían un solo "recibido" y un solo "entregado".
+const pagosIntercambio = (it: any, lado: "recibidos" | "entregados"): any[] => {
+  if (Array.isArray(it[lado])) return it[lado];
+  const viejo = lado === "recibidos" ? it.recibido : it.entregado;
+  return viejo ? [viejo] : [];
+};
+
+// "$50.00 (Divisas) + 20.000,00 BS (Pago movil · Ref: 4829)"
+const textoPagosLista = (pagos: any[]) =>
+  pagos.map((p) => `${fmtMonto(p.metodo, p.monto)} (${p.metodo}${p.referencia ? ` · Ref: ${p.referencia}` : ""})`).join(" + ");
+
+const fechaLocalTexto = (d: Date) => {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 
 const etiquetaTipoPago = (tipo: string) =>
   tipo === "edicion" ? "Ajuste por edición"
@@ -105,8 +120,8 @@ const etiquetaTipoPago = (tipo: string) =>
   : "Pago inicial";
 
 // --- FORMULARIO REUTILIZABLE DE MÚLTIPLES MÉTODOS DE PAGO ---
-function useFormularioPagos() {
-  const [metodos, setMetodos] = useState<string[]>(["Efectivo"]);
+function useFormularioPagos(inicial: string = "Efectivo") {
+  const [metodos, setMetodos] = useState<string[]>([inicial]);
   const [montos, setMontos] = useState<Record<string, string>>({});
   const [refs, setRefs] = useState<Record<string, string>>({});
 
@@ -122,9 +137,17 @@ function useFormularioPagos() {
   };
   const setMonto = (m: string, v: string) => setMontos((p) => ({ ...p, [m]: v }));
   const setRef = (m: string, v: string) => setRefs((p) => ({ ...p, [m]: v.replace(/\D/g, "").slice(0, 4) }));
-  const reset = () => { setMetodos(["Efectivo"]); setMontos({}); setRefs({}); };
+  const reset = () => { setMetodos([inicial]); setMontos({}); setRefs({}); };
+  // Borra solo los montos escritos (se conservan los métodos elegidos)
+  const resetMontos = () => setMontos({});
+  // Carga métodos, montos y referencias (para editar un registro)
+  const cargar = (ms: string[], mo: Record<string, string>, rf: Record<string, string>) => {
+    setMetodos(ms.length > 0 ? ms : [inicial]);
+    setMontos(mo);
+    setRefs(rf);
+  };
 
-  return { metodos, montos, refs, toggleMetodo, setMonto, setRef, reset };
+  return { metodos, montos, refs, toggleMetodo, setMonto, setRef, reset, resetMontos, cargar };
 }
 type FormPagos = ReturnType<typeof useFormularioPagos>;
 
@@ -135,7 +158,12 @@ function SelectorPagos({
   objetivoBs,
   pagadoDolares = 0,
   tasa = 1,
-  ocultarMetodo = null
+  ocultarMetodo = null,
+  titulo = "Método de pago",
+  mostrarResumen = true,
+  sugerirMonto = false,
+  etiquetaTotal = "Total a cubrir",
+  etiquetaPorPagar = "Monto por pagar"
 }: {
   form: FormPagos;
   auto: boolean;
@@ -144,13 +172,18 @@ function SelectorPagos({
   pagadoDolares?: number;
   tasa?: number;
   ocultarMetodo?: string | null;
+  titulo?: string;
+  mostrarResumen?: boolean;
+  sugerirMonto?: boolean;
+  etiquetaTotal?: string;
+  etiquetaPorPagar?: string;
 }) {
   const porPagarDolares = Math.max(0, objetivoDolares - pagadoDolares);
   return (
     <div className="space-y-3">
       <div className="space-y-2">
         <label className="block text-xs font-bold text-gray-600 uppercase">
-          Método de pago <span className="normal-case font-medium text-gray-400">(puedes elegir varios)</span>
+          {titulo} <span className="normal-case font-medium text-gray-400">(puedes elegir varios)</span>
         </label>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {METODOS_PAGO.map((metodo) => (
@@ -187,7 +220,7 @@ function SelectorPagos({
                   min="0"
                   value={form.montos[m] ?? ""}
                   onChange={(e) => form.setMonto(m, e.target.value)}
-                  placeholder="0.00"
+                  placeholder={sugerirMonto && form.metodos.length === 1 ? (m === "Divisas" ? objetivoDolares : objetivoBs).toFixed(2) : "0.00"}
                   className="w-36 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-bold text-right bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               )}
@@ -206,14 +239,14 @@ function SelectorPagos({
         ))}
       </div>
 
-      {form.metodos.length > 1 && (
+      {mostrarResumen && form.metodos.length > 1 && (
         <>
           <p className="text-[11px] text-gray-500">
             Anota cuánto paga con cada método. Efectivo, Pago móvil y Transferencia se anotan en BS; Divisas en $.
           </p>
           <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-1.5 text-xs">
             <div className="flex justify-between gap-3">
-              <span className="font-bold text-gray-500 uppercase">Total a cubrir</span>
+              <span className="font-bold text-gray-500 uppercase">{etiquetaTotal}</span>
               <span className="font-bold text-gray-800">${objetivoDolares.toFixed(2)} · {fmtBs(objetivoBs)} BS</span>
             </div>
             <div className="flex justify-between gap-3">
@@ -221,7 +254,7 @@ function SelectorPagos({
               <span className="font-bold text-emerald-700">${pagadoDolares.toFixed(2)} · {fmtBs(pagadoDolares * tasa)} BS</span>
             </div>
             <div className="flex justify-between gap-3 border-t border-gray-200 pt-1.5">
-              <span className="font-black text-gray-700 uppercase">Monto por pagar</span>
+              <span className="font-black text-gray-700 uppercase">{etiquetaPorPagar}</span>
               <span className="font-black text-amber-700">${porPagarDolares.toFixed(2)} · {fmtBs(porPagarDolares * tasa)} BS</span>
             </div>
           </div>
@@ -258,15 +291,21 @@ export function FinancialDashboard(props: any) {
   const [filtroIntercambios, setFiltroIntercambios] = useState("dia");
   const [modalIntercambioOpen, setModalIntercambioOpen] = useState(false);
   const [intercambioEditId, setIntercambioEditId] = useState<string | null>(null);
-  const [recMoneda, setRecMoneda] = useState<"USD" | "BS">("USD");
-  const [recMetodoBs, setRecMetodoBs] = useState("Efectivo");
-  const [recMonto, setRecMonto] = useState("");
-  const [recRef, setRecRef] = useState("");
-  const [entMetodoBs, setEntMetodoBs] = useState("Efectivo");
-  const [entMonto, setEntMonto] = useState("");
-  const [entRef, setEntRef] = useState("");
+  const formRec = useFormularioPagos("Divisas");
+  const formEnt = useFormularioPagos("Efectivo");
   const [intercambioNota, setIntercambioNota] = useState("");
   const [guardandoIntercambio, setGuardandoIntercambio] = useState(false);
+
+  // Gastos del negocio
+  const [gastos, setGastos] = useState<any[]>([]);
+  const [filtroGastos, setFiltroGastos] = useState("dia");
+  const [modalGastoOpen, setModalGastoOpen] = useState(false);
+  const [gastoEditId, setGastoEditId] = useState<string | null>(null);
+  const [gastoConcepto, setGastoConcepto] = useState("");
+  const [gastoFecha, setGastoFecha] = useState("");
+  const [gastoNota, setGastoNota] = useState("");
+  const formGasto = useFormularioPagos();
+  const [guardandoGasto, setGuardandoGasto] = useState(false);
 
   const [busquedaInventario, setBusquedaInventario] = useState("");
   const [modalStockBajoOpen, setModalStockBajoOpen] = useState(false);
@@ -414,6 +453,12 @@ export function FinancialDashboard(props: any) {
       setIntercambios(lista);
     });
 
+    const unsubGastos = onSnapshot(collection(db, COLLECTION_GASTOS), (snapshot) => {
+      const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      lista.sort((a: any, b: any) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+      setGastos(lista);
+    });
+
     const unsubTasa = onSnapshot(doc(db, COLLECTION_CONFIG, "bcv"), (docSnap) => {
       if (docSnap.exists()) {
         const val = docSnap.data().valor;
@@ -435,6 +480,7 @@ export function FinancialDashboard(props: any) {
       unsubSales();
       unsubDev();
       unsubInter();
+      unsubGastos();
       unsubTasa();
       unsubDivisa();
     };
@@ -487,13 +533,13 @@ export function FinancialDashboard(props: any) {
   };
 
   const calcularPrecios = (pCompra: number) => {
+    // Compra menor a $1 (0.99 o menos): precio fijo de venta $1.50.
+    // Compra de $1 o más: ganancia del 100% (precio de venta = el doble).
     let pVenta = 0;
-    if (pCompra <= 1) {
+    if (pCompra < 1) {
       pVenta = 1.5;
-    } else if (pCompra <= 2) {
-      pVenta = pCompra * 2;
     } else {
-      pVenta = pCompra * 1.7;
+      pVenta = pCompra * 2;
     }
     const pFinalBs = pVenta * tasaBcv;
     return {
@@ -1391,30 +1437,30 @@ export function FinancialDashboard(props: any) {
     .sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" }));
 
   // --- INTERCAMBIO INTERNO ---
-  // Lo que se da es siempre la moneda contraria a la que se recibe ($ ↔ BS)
-  const entMoneda: "USD" | "BS" = recMoneda === "USD" ? "BS" : "USD";
-  const recMetodo = recMoneda === "USD" ? "Divisas" : recMetodoBs;
-  const entMetodo = entMoneda === "USD" ? "Divisas" : entMetodoBs;
-  const recMontoNum = parseFloat(recMonto) || 0;
-  const entMontoNum = parseFloat(entMonto) || 0;
+  // Lo recibido y lo dado pueden tener varios métodos de pago, cada uno con su monto y su referencia
+  const armarLadoIntercambio = (form: FormPagos) =>
+    form.metodos
+      .map((m) => ({
+        metodo: m,
+        monto: redondear(parseFloat(form.montos[m]) || 0),
+        referencia: necesitaReferencia(m) ? (form.refs[m] || "") : ""
+      }))
+      .filter((p) => p.monto > 0);
+  const recibidosPrev = armarLadoIntercambio(formRec);
+  const entregadosPrev = armarLadoIntercambio(formEnt);
 
   const validarIntercambio = (): string | null => {
-    if (recMontoNum <= 0) return "Escribe el monto recibido.";
-    if (entMontoNum <= 0) return "Escribe el monto dado.";
-    if (necesitaReferencia(recMetodo) && recRef.length !== 4) return "Ingresa los 4 últimos dígitos de la referencia del monto recibido.";
-    if (necesitaReferencia(entMetodo) && entRef.length !== 4) return "Ingresa los 4 últimos dígitos de la referencia del monto dado.";
+    if (recibidosPrev.length === 0) return "Escribe el monto recibido.";
+    if (entregadosPrev.length === 0) return "Escribe el monto dado.";
+    if (recibidosPrev.some((p) => necesitaReferencia(p.metodo) && p.referencia.length !== 4)) return "Ingresa los 4 últimos dígitos de la referencia de lo recibido.";
+    if (entregadosPrev.some((p) => necesitaReferencia(p.metodo) && p.referencia.length !== 4)) return "Ingresa los 4 últimos dígitos de la referencia de lo dado.";
     return null;
   };
   const errorIntercambio = validarIntercambio();
 
   const limpiarFormIntercambio = () => {
-    setRecMoneda("USD");
-    setRecMetodoBs("Efectivo");
-    setRecMonto("");
-    setRecRef("");
-    setEntMetodoBs("Efectivo");
-    setEntMonto("");
-    setEntRef("");
+    formRec.reset();
+    formEnt.reset();
     setIntercambioNota("");
   };
 
@@ -1424,15 +1470,20 @@ export function FinancialDashboard(props: any) {
     setModalIntercambioOpen(true);
   };
 
+  const cargarLadoEnForm = (form: FormPagos, pagos: any[]) => {
+    const montos: Record<string, string> = {};
+    const refs: Record<string, string> = {};
+    pagos.forEach((p) => {
+      montos[p.metodo] = String(p.monto);
+      refs[p.metodo] = p.referencia || "";
+    });
+    form.cargar(pagos.map((p) => p.metodo), montos, refs);
+  };
+
   const abrirEditarIntercambio = (it: any) => {
     setIntercambioEditId(it.id);
-    setRecMoneda(it.recibido.metodo === "Divisas" ? "USD" : "BS");
-    setRecMetodoBs(it.recibido.metodo === "Divisas" ? "Efectivo" : it.recibido.metodo);
-    setRecMonto(String(it.recibido.monto));
-    setRecRef(it.recibido.referencia || "");
-    setEntMetodoBs(it.entregado.metodo === "Divisas" ? "Efectivo" : it.entregado.metodo);
-    setEntMonto(String(it.entregado.monto));
-    setEntRef(it.entregado.referencia || "");
+    cargarLadoEnForm(formRec, pagosIntercambio(it, "recibidos"));
+    cargarLadoEnForm(formEnt, pagosIntercambio(it, "entregados"));
     setIntercambioNota(it.nota || "");
     setModalIntercambioOpen(true);
   };
@@ -1448,21 +1499,16 @@ export function FinancialDashboard(props: any) {
     setGuardandoIntercambio(true);
     try {
       const datos = {
-        recibido: {
-          metodo: recMetodo,
-          monto: redondear(recMontoNum),
-          referencia: necesitaReferencia(recMetodo) ? recRef : ""
-        },
-        entregado: {
-          metodo: entMetodo,
-          monto: redondear(entMontoNum),
-          referencia: necesitaReferencia(entMetodo) ? entRef : ""
-        },
+        recibidos: recibidosPrev,
+        entregados: entregadosPrev,
         nota: intercambioNota.trim()
       };
       if (intercambioEditId) {
         await updateDoc(doc(db, COLLECTION_INTERCAMBIOS, intercambioEditId), {
           ...datos,
+          // Los intercambios anteriores guardaban un solo método: se reemplazan por las listas nuevas
+          recibido: deleteField(),
+          entregado: deleteField(),
           editado: true,
           fechaEdicion: new Date().toISOString()
         });
@@ -1480,6 +1526,123 @@ export function FinancialDashboard(props: any) {
       setGuardandoIntercambio(false);
     }
   };
+
+  // --- GASTOS ---
+  const enPeriodo = (fechaIso: string, filtro: string) => {
+    const f = new Date(fechaIso);
+    const ahora = new Date();
+    if (filtro === "dia") return f.toDateString() === ahora.toDateString();
+    if (filtro === "semana") {
+      const unaSemanaAtras = new Date();
+      unaSemanaAtras.setDate(ahora.getDate() - 7);
+      return f >= unaSemanaAtras;
+    }
+    if (filtro === "mes") return f.getMonth() === ahora.getMonth() && f.getFullYear() === ahora.getFullYear();
+    return true;
+  };
+
+  const armarPagosGasto = (form: FormPagos) =>
+    form.metodos
+      .map((m) => {
+        const monto = redondear(parseFloat(form.montos[m]) || 0);
+        return {
+          metodo: m,
+          monto,
+          montoDolares: redondear(aDolares(m, monto)),
+          referencia: necesitaReferencia(m) ? (form.refs[m] || "") : ""
+        };
+      })
+      .filter((p) => p.monto > 0);
+  const pagosGastoPrev = armarPagosGasto(formGasto);
+
+  const validarGasto = (): string | null => {
+    if (!gastoConcepto.trim()) return "Escribe qué gastaste.";
+    if (!gastoFecha) return "Elige la fecha del gasto.";
+    if (pagosGastoPrev.length === 0) return "Escribe cuánto pagaste.";
+    if (pagosGastoPrev.some((p) => necesitaReferencia(p.metodo) && p.referencia.length !== 4)) return "Ingresa los 4 últimos dígitos de la referencia.";
+    return null;
+  };
+  const errorGasto = validarGasto();
+
+  const abrirNuevoGasto = () => {
+    setGastoEditId(null);
+    setGastoConcepto("");
+    setGastoFecha(fechaLocalTexto(new Date()));
+    setGastoNota("");
+    formGasto.reset();
+    setModalGastoOpen(true);
+  };
+
+  const abrirEditarGasto = (g: any) => {
+    setGastoEditId(g.id);
+    setGastoConcepto(g.concepto || "");
+    setGastoFecha(fechaLocalTexto(new Date(g.fecha)));
+    setGastoNota(g.nota || "");
+    cargarLadoEnForm(formGasto, g.pagos || []);
+    setModalGastoOpen(true);
+  };
+
+  const cerrarModalGasto = () => {
+    setModalGastoOpen(false);
+    setGastoEditId(null);
+    setGastoConcepto("");
+    setGastoFecha("");
+    setGastoNota("");
+    formGasto.reset();
+  };
+
+  const guardarGasto = async () => {
+    if (guardandoGasto || validarGasto()) return;
+    setGuardandoGasto(true);
+    try {
+      // Si se conserva la misma fecha al editar, se mantiene la hora original
+      let fechaIso: string;
+      const original = gastoEditId ? gastos.find((g: any) => g.id === gastoEditId) : null;
+      if (original && fechaLocalTexto(new Date(original.fecha)) === gastoFecha) fechaIso = original.fecha;
+      else if (gastoFecha === fechaLocalTexto(new Date())) fechaIso = new Date().toISOString();
+      else fechaIso = new Date(`${gastoFecha}T12:00:00`).toISOString();
+
+      const datos = {
+        fecha: fechaIso,
+        concepto: gastoConcepto.trim(),
+        pagos: pagosGastoPrev,
+        totalDolares: redondear(sumaDolares(pagosGastoPrev)),
+        nota: gastoNota.trim()
+      };
+      if (gastoEditId) {
+        await updateDoc(doc(db, COLLECTION_GASTOS, gastoEditId), {
+          ...datos,
+          editado: true,
+          fechaEdicion: new Date().toISOString()
+        });
+      } else {
+        await addDoc(collection(db, COLLECTION_GASTOS), { ...datos, editado: false });
+      }
+      cerrarModalGasto();
+    } catch (e) {
+      console.error("Error al guardar el gasto:", e);
+    } finally {
+      setGuardandoGasto(false);
+    }
+  };
+
+  const eliminarGasto = async (g: any) => {
+    if (!window.confirm(`¿Eliminar el gasto "${g.concepto}"? Esta acción no se puede deshacer.`)) return;
+    try {
+      await deleteDoc(doc(db, COLLECTION_GASTOS, g.id));
+    } catch (e) {
+      console.error("Error eliminando el gasto:", e);
+    }
+  };
+
+  const gastosFiltrados = gastos.filter((g: any) => enPeriodo(g.fecha, filtroGastos));
+  const totalGastosFiltradosDolares = gastosFiltrados.reduce((a: number, g: any) => a + (g.totalDolares || 0), 0);
+  const gastosFiltradosPorMetodo: Record<string, number> = {};
+  gastosFiltrados.forEach((g: any) =>
+    (g.pagos || []).forEach((p: any) => {
+      gastosFiltradosPorMetodo[p.metodo] = (gastosFiltradosPorMetodo[p.metodo] || 0) + p.monto;
+    })
+  );
 
   // Filtro propio de la lista de intercambios (el reporte usa el filtro de Ventas)
   const intercambiosFiltrados = intercambios.filter((it: any) => {
@@ -1532,9 +1695,19 @@ export function FinancialDashboard(props: any) {
       else if (metodo === "Transferencia") cajaTransferenciaBs += monto;
     };
     interPeriodo.forEach((it: any) => {
-      moverCaja(it.recibido.metodo, it.recibido.monto);
-      moverCaja(it.entregado.metodo, -it.entregado.monto);
+      pagosIntercambio(it, "recibidos").forEach((p: any) => moverCaja(p.metodo, p.monto));
+      pagosIntercambio(it, "entregados").forEach((p: any) => moverCaja(p.metodo, -p.monto));
     });
+
+    // Gastos del periodo: salen de la caja
+    const gastosPeriodo = gastos.filter((g: any) => dentroDelFiltro(g.fecha));
+    gastosPeriodo.forEach((g: any) => (g.pagos || []).forEach((p: any) => moverCaja(p.metodo, -p.monto)));
+    const totalGastosDolar = gastosPeriodo.reduce((a: number, g: any) => a + (g.totalDolares || 0), 0);
+    const tituloCajaNeta =
+      "Movimiento neto de caja por método (ventas" +
+      (interPeriodo.length > 0 ? " + intercambios" : "") +
+      (gastosPeriodo.length > 0 ? " − gastos" : "") +
+      ")";
 
     const totalCobradoDolar = sumaDolares(pagosPeriodo);
     const reembolsosDolar = Math.abs(sumaDolares(pagosPeriodo.filter((p: any) => p.monto < 0)));
@@ -1652,7 +1825,6 @@ export function FinancialDashboard(props: any) {
                   <th>Fecha / Hora</th>
                   <th>Recibí</th>
                   <th>Di</th>
-                  <th>Ref.</th>
                   <th>Nota</th>
                 </tr>
               </thead>
@@ -1660,23 +1832,62 @@ export function FinancialDashboard(props: any) {
                 ${interPeriodo.map((it: any) => `
                   <tr>
                     <td>${filtroVentas === "dia" ? new Date(it.fecha).toLocaleTimeString() : new Date(it.fecha).toLocaleString()}${it.editado ? " <em>(editado)</em>" : ""}</td>
-                    <td>${escapeHtml(fmtMonto(it.recibido.metodo, it.recibido.monto))} (${escapeHtml(it.recibido.metodo)})</td>
-                    <td>${escapeHtml(fmtMonto(it.entregado.metodo, it.entregado.monto))} (${escapeHtml(it.entregado.metodo)})</td>
-                    <td>${escapeHtml([it.recibido.referencia, it.entregado.referencia].filter(Boolean).join(", ")) || "N/A"}</td>
+                    <td>${escapeHtml(textoPagosLista(pagosIntercambio(it, "recibidos")))}</td>
+                    <td>${escapeHtml(textoPagosLista(pagosIntercambio(it, "entregados")))}</td>
                     <td>${escapeHtml(it.nota) || ""}</td>
                   </tr>
                 `).join("")}
               </tbody>
             </table>
           </div>
+          ` : ""}
 
+          ${gastosPeriodo.length > 0 ? `
+          <div class="dev-box" style="border-color:#e11d48; background:#fff1f2;">
+            <h3 style="margin: 0 0 8px 0; color: #be123c; font-size: 15px;">Gastos del periodo (${gastosPeriodo.length})</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Concepto</th>
+                  <th>Pagado con</th>
+                  <th class="num">Total ($ equiv.)</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${gastosPeriodo.map((g: any) => `
+                  <tr>
+                    <td>${new Date(g.fecha).toLocaleDateString()}</td>
+                    <td>${escapeHtml(g.concepto)}${g.nota ? `<br><em>${escapeHtml(g.nota)}</em>` : ""}</td>
+                    <td>${escapeHtml(textoPagosLista(g.pagos || []))}</td>
+                    <td class="num">$${(g.totalDolares || 0).toFixed(2)}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+            <p style="margin: 8px 0 0 0; font-size: 14px; text-align: right;"><strong>Total de gastos: $${totalGastosDolar.toFixed(2)}</strong></p>
+          </div>
+          ` : ""}
+
+          ${interPeriodo.length > 0 || gastosPeriodo.length > 0 ? `
           <div class="totales-box">
-            <h3>Movimiento neto de caja por método (ventas + intercambios)</h3>
+            <h3>${tituloCajaNeta}</h3>
             <div class="totales-grid">
               <div><span>Efectivo (Bolívares):</span> <strong>${fmtBs(cajaEfectivoBs)} BS</strong></div>
               <div><span>Divisa (Dólares):</span> <strong>$${cajaDivisaDolar.toFixed(2)}</strong></div>
               <div><span>Pago Móvil (BS):</span> <strong>${fmtBs(cajaPagoMovilBs)} BS</strong></div>
               <div><span>Transferencia (BS):</span> <strong>${fmtBs(cajaTransferenciaBs)} BS</strong></div>
+            </div>
+          </div>
+          ` : ""}
+
+          ${gastosPeriodo.length > 0 ? `
+          <div class="totales-box">
+            <h3>Resultado del periodo después de gastos</h3>
+            <div class="total-final">
+              <p>Total cobrado, neto de reembolsos ($ equivalente): $${totalCobradoDolar.toFixed(2)}</p>
+              <p style="color:#be123c;">Gastos del periodo ($ equivalente): − $${totalGastosDolar.toFixed(2)}</p>
+              <p>Total después de gastos ($ equivalente): $${(totalCobradoDolar - totalGastosDolar).toFixed(2)}</p>
             </div>
           </div>
           ` : ""}
@@ -1803,6 +2014,10 @@ export function FinancialDashboard(props: any) {
               <RefreshCw className="w-5 h-5" />
               Intercambio interno
             </button>
+            <button onClick={() => setCurrentSection("gastos")} className={navClase("gastos")}>
+              <DollarSign className="w-5 h-5" />
+              Gastos
+            </button>
             <button onClick={() => setCurrentSection("inventario")} className={navClase("inventario")}>
               <Package className="w-5 h-5" />
               Inventario
@@ -1837,6 +2052,7 @@ export function FinancialDashboard(props: any) {
                 {currentSection === "pendientes" && "Pagos Pendientes"}
                 {currentSection === "devoluciones" && "Módulo de Devoluciones y Cambios"}
                 {currentSection === "intercambios" && "Intercambio Interno"}
+                {currentSection === "gastos" && "Gastos del Negocio"}
                 {currentSection === "inventario" && "Módulo de Inventario"}
               </h2>
               <p className="text-emerald-100 text-sm mt-1">
@@ -2335,10 +2551,10 @@ export function FinancialDashboard(props: any) {
                         </div>
                         <p className="text-xs text-gray-400">{new Date(it.fecha).toLocaleString()} (ID: {it.id.slice(0, 8)})</p>
                         <p className="text-sm text-gray-800">
-                          <strong>Recibí:</strong> {fmtMonto(it.recibido.metodo, it.recibido.monto)} <span className="text-gray-500">({it.recibido.metodo}{it.recibido.referencia ? ` · Ref: ${it.recibido.referencia}` : ""})</span>
+                          <strong>Recibí:</strong> {textoPagosLista(pagosIntercambio(it, "recibidos"))}
                         </p>
                         <p className="text-sm text-gray-800">
-                          <strong>Di:</strong> {fmtMonto(it.entregado.metodo, it.entregado.monto)} <span className="text-gray-500">({it.entregado.metodo}{it.entregado.referencia ? ` · Ref: ${it.entregado.referencia}` : ""})</span>
+                          <strong>Di:</strong> {textoPagosLista(pagosIntercambio(it, "entregados"))}
                         </p>
                         {it.nota && <p className="text-xs text-gray-500">Nota: {it.nota}</p>}
                       </div>
@@ -2353,6 +2569,94 @@ export function FinancialDashboard(props: any) {
                 ) : (
                   <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center text-gray-500">
                     No hay intercambios registrados para este filtro de tiempo.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {currentSection === "gastos" && (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white rounded-2xl border border-gray-200 p-6 shadow-sm gap-4">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Gastos del negocio</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Anota lo que gastas (agua, artículos del baño, etc.). Se restan en el reporte de ventas.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                  <div className="flex bg-gray-100 p-1 rounded-xl">
+                    {[["dia", "Día"], ["semana", "Semana"], ["mes", "Mes"]].map(([val, label]) => (
+                      <button
+                        key={val}
+                        onClick={() => setFiltroGastos(val)}
+                        className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer", filtroGastos === val ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <Button onClick={abrirNuevoGasto} className="bg-rose-600 hover:bg-rose-700 text-white font-bold flex items-center gap-2 cursor-pointer">
+                    <Plus className="w-4 h-4" /> Nuevo gasto
+                  </Button>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm flex flex-col sm:flex-row justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                    Total gastado ({filtroGastos === "dia" ? "hoy" : filtroGastos === "semana" ? "últimos 7 días" : "este mes"})
+                  </p>
+                  <p className="text-2xl font-black text-rose-600">${totalGastosFiltradosDolares.toFixed(2)} <span className="text-xs font-bold text-gray-500">equivalente</span></p>
+                </div>
+                <div className="text-xs font-bold text-gray-600 space-y-0.5 sm:text-right">
+                  {Object.keys(gastosFiltradosPorMetodo).length > 0 ? (
+                    Object.keys(gastosFiltradosPorMetodo).map((m) => (
+                      <p key={m}>{m}: {fmtMonto(m, gastosFiltradosPorMetodo[m])}</p>
+                    ))
+                  ) : (
+                    <p className="text-gray-400">Sin gastos en este periodo</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {gastosFiltrados.length > 0 ? (
+                  gastosFiltrados.map((g: any) => (
+                    <div key={g.id} className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-bold text-gray-900">{g.concepto}</p>
+                          {g.editado && (
+                            <span className="text-xs font-bold px-2 py-0.5 bg-gray-100 text-gray-600 rounded-lg">Editado</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-400">{new Date(g.fecha).toLocaleDateString()}</p>
+                        <p className="text-sm text-gray-800">
+                          <strong>Pagado con:</strong> {textoPagosLista(g.pagos || [])}
+                        </p>
+                        {g.nota && <p className="text-xs text-gray-500">Nota: {g.nota}</p>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-lg font-black text-rose-600 mr-2">${(g.totalDolares || 0).toFixed(2)}</p>
+                        <button
+                          onClick={() => abrirEditarGasto(g)}
+                          className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
+                          title="Editar"
+                        >
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => eliminarGasto(g)}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                          title="Eliminar"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center text-gray-500">
+                    No hay gastos registrados para este filtro de tiempo.
                   </div>
                 )}
               </div>
@@ -2648,6 +2952,93 @@ export function FinancialDashboard(props: any) {
         </div>
       )}
 
+      {/* MODAL: GASTO (nuevo / editar) */}
+      {modalGastoOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto space-y-5">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-rose-50 text-rose-700 rounded-xl">
+                  <DollarSign className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-gray-900">{gastoEditId ? "Editar gasto" : "Nuevo gasto"}</h3>
+                  <p className="text-xs text-gray-500">Qué gastaste, cuánto y con qué pagaste</p>
+                </div>
+              </div>
+              <button
+                onClick={cerrarModalGasto}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">¿Qué gastaste?</label>
+              <input
+                type="text"
+                value={gastoConcepto}
+                onChange={(e) => setGastoConcepto(e.target.value)}
+                placeholder="Ej: Agua, artículos del baño, bolsas..."
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Fecha del gasto</label>
+              <input
+                type="date"
+                value={gastoFecha}
+                onChange={(e) => setGastoFecha(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+              />
+            </div>
+
+            <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200">
+              <SelectorPagos form={formGasto} auto={false} objetivoDolares={0} objetivoBs={0} mostrarResumen={false} titulo="Pagado con" />
+              {pagosGastoPrev.length > 0 && (
+                <p className="text-[11px] text-gray-500 mt-2">
+                  Total equivalente: <strong>${sumaDolares(pagosGastoPrev).toFixed(2)}</strong> (los Bs se convierten con la tasa BCV actual)
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nota (opcional)</label>
+              <input
+                type="text"
+                value={gastoNota}
+                onChange={(e) => setGastoNota(e.target.value)}
+                placeholder="Ej: compra en el abasto de la esquina"
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+              />
+            </div>
+
+            {errorGasto && (gastoConcepto.trim() !== "" || pagosGastoPrev.length > 0) && (
+              <p className="text-xs font-bold text-amber-700 text-right">{errorGasto}</p>
+            )}
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={cerrarModalGasto}
+                className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <Button
+                onClick={guardarGasto}
+                disabled={!!errorGasto || guardandoGasto}
+                className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-sm cursor-pointer"
+              >
+                {guardandoGasto ? "Guardando..." : (gastoEditId ? "Guardar cambios" : "Guardar gasto")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: INTERCAMBIO INTERNO (nuevo / editar) */}
       {modalIntercambioOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -2659,7 +3050,7 @@ export function FinancialDashboard(props: any) {
                 </div>
                 <div>
                   <h3 className="text-xl font-black text-gray-900">{intercambioEditId ? "Editar intercambio" : "Nuevo intercambio interno"}</h3>
-                  <p className="text-xs text-gray-500">Escribe los montos tal cual los recibiste y los diste</p>
+                  <p className="text-xs text-gray-500">Escribe los montos tal cual los recibiste y los diste, por cada método</p>
                 </div>
               </div>
               <button
@@ -2670,95 +3061,15 @@ export function FinancialDashboard(props: any) {
               </button>
             </div>
 
-            {[
-              {
-                titulo: "Recibí",
-                moneda: recMoneda,
-                elegirMoneda: (m: "USD" | "BS") => setRecMoneda(m),
-                metodoBs: recMetodoBs,
-                setMetodoBs: setRecMetodoBs,
-                monto: recMonto,
-                setMonto: setRecMonto,
-                referencia: recRef,
-                setReferencia: setRecRef,
-                metodo: recMetodo
-              },
-              {
-                titulo: "Di",
-                moneda: entMoneda,
-                elegirMoneda: (m: "USD" | "BS") => setRecMoneda(m === "USD" ? "BS" : "USD"),
-                metodoBs: entMetodoBs,
-                setMetodoBs: setEntMetodoBs,
-                monto: entMonto,
-                setMonto: setEntMonto,
-                referencia: entRef,
-                setReferencia: setEntRef,
-                metodo: entMetodo
-              }
-            ].map((lado) => (
-              <div key={lado.titulo} className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-3">
-                <p className="text-sm font-black text-gray-800 uppercase">{lado.titulo}</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {([["USD", "Dólares ($)"], ["BS", "Bolívares (BS)"]] as const).map(([m, label]) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => lado.elegirMoneda(m)}
-                      className={cn(
-                        "py-2 px-3 text-xs font-bold rounded-xl border transition cursor-pointer",
-                        lado.moneda === m ? "bg-sky-600 text-white border-sky-600 shadow-sm" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
-                      )}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
+            <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-3">
+              <p className="text-sm font-black text-gray-800 uppercase">Recibí</p>
+              <SelectorPagos form={formRec} auto={false} objetivoDolares={0} objetivoBs={0} mostrarResumen={false} titulo="Recibí con" />
+            </div>
 
-                {lado.moneda === "BS" && (
-                  <div className="grid grid-cols-3 gap-2">
-                    {METODOS_BS.map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => lado.setMetodoBs(m)}
-                        className={cn(
-                          "py-1.5 px-2 text-xs font-bold rounded-lg border transition cursor-pointer",
-                          lado.metodoBs === m ? "bg-sky-100 text-sky-800 border-sky-300" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
-                        )}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                    Monto {lado.titulo === "Recibí" ? "recibido" : "dado"} {lado.moneda === "USD" ? "($)" : "(BS)"}
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={lado.monto}
-                    onChange={(e) => lado.setMonto(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-                  />
-                </div>
-
-                {necesitaReferencia(lado.metodo) && (
-                  <input
-                    type="text"
-                    maxLength={4}
-                    value={lado.referencia}
-                    onChange={(e) => lado.setReferencia(e.target.value.replace(/\D/g, "").slice(0, 4))}
-                    placeholder="Referencia: últimos 4 dígitos (Ej: 4829)"
-                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-                  />
-                )}
-              </div>
-            ))}
+            <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-3">
+              <p className="text-sm font-black text-gray-800 uppercase">Di</p>
+              <SelectorPagos form={formEnt} auto={false} objetivoDolares={0} objetivoBs={0} mostrarResumen={false} titulo="Di con" />
+            </div>
 
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nota (opcional)</label>
@@ -2771,7 +3082,7 @@ export function FinancialDashboard(props: any) {
               />
             </div>
 
-            {errorIntercambio && (recMontoNum > 0 || entMontoNum > 0) && (
+            {errorIntercambio && (recibidosPrev.length > 0 || entregadosPrev.length > 0) && (
               <p className="text-xs font-bold text-amber-700 text-right">{errorIntercambio}</p>
             )}
 
