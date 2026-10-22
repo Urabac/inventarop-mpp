@@ -106,6 +106,16 @@ const pagosIntercambio = (it: any, lado: "recibidos" | "entregados"): any[] => {
 const textoPagosLista = (pagos: any[]) =>
   pagos.map((p) => `${fmtMonto(p.metodo, p.monto)} (${p.metodo}${p.referencia ? ` · Ref: ${p.referencia}` : ""})`).join(" + ");
 
+// Dinero entregado/cobrado en una devolución. Las antiguas tenían un solo método; las nuevas una lista "pagos".
+const textoLiquidacion = (liq: any) =>
+  Array.isArray(liq?.pagos)
+    ? textoPagosLista(liq.pagos)
+    : `${fmtMonto(liq.metodo, liq.monto)} (${liq.metodo})`;
+const totalLiquidacion = (liq: any) =>
+  Array.isArray(liq?.pagos)
+    ? (liq.pagos.length === 1 ? fmtMonto(liq.pagos[0].metodo, liq.pagos[0].monto) : `$${(liq.montoDolares || 0).toFixed(2)} (${fmtBs(liq.montoBs || 0)} BS equiv.)`)
+    : fmtMonto(liq.metodo, liq.monto);
+
 const fechaLocalTexto = (d: Date) => {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
@@ -319,9 +329,10 @@ export function FinancialDashboard(props: any) {
   const [tipoDevolucion, setTipoDevolucion] = useState<"devolucion" | "cambio">("devolucion");
   // Productos nuevos del cambio (varios)
   const [cambioNuevos, setCambioNuevos] = useState<{ id: string; qty: number }[]>([]);
-  const [metodoLiq, setMetodoLiq] = useState("Efectivo");
-  const [montoLiqManual, setMontoLiqManual] = useState("");
-  const [refLiq, setRefLiq] = useState("");
+  // Dinero que se entrega o se cobra en la devolución/cambio (puede ser con varios métodos)
+  const formLiq = useFormularioPagos("Efectivo");
+  // Buscador del producto nuevo en un cambio
+  const [busquedaCambio, setBusquedaCambio] = useState("");
   const [comisionDevolucion, setComisionDevolucion] = useState("");
 
   // Estados para Editar venta
@@ -332,6 +343,7 @@ export function FinancialDashboard(props: any) {
   const [editMetodoLiq, setEditMetodoLiq] = useState("Efectivo");
   const [editMontoLiq, setEditMontoLiq] = useState("");
   const [editRefLiq, setEditRefLiq] = useState("");
+  const [editConcepto, setEditConcepto] = useState("");
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
 
   const [modalProductoOpen, setModalProductoOpen] = useState(false);
@@ -348,6 +360,8 @@ export function FinancialDashboard(props: any) {
   const pagoVenta = useFormularioPagos();
   const [esPagoPendiente, setEsPagoPendiente] = useState(false);
   const [clienteNombre, setClienteNombre] = useState("");
+  // Concepto / información extra de la venta (opcional)
+  const [conceptoVenta, setConceptoVenta] = useState("");
   // Precio final editable (rebajas). null = se usa el total calculado del carrito.
   const [totalEditado, setTotalEditado] = useState<{ d: string; bs: string } | null>(null);
   const [darVuelto, setDarVuelto] = useState(false);
@@ -769,6 +783,7 @@ export function FinancialDashboard(props: any) {
     pagoVenta.reset();
     setEsPagoPendiente(false);
     setClienteNombre("");
+    setConceptoVenta("");
     setDarVuelto(false);
     setMetodoVuelto("Divisas");
     setMontoRecibido("");
@@ -803,6 +818,7 @@ export function FinancialDashboard(props: any) {
         pagos,
         pendiente: esPagoPendiente,
         cliente: esPagoPendiente ? clienteNombre.trim() : "",
+        concepto: conceptoVenta.trim(),
         montoPendiente,
         vuelto: vueltoActivo && vueltoDolares > 0
           ? {
@@ -830,6 +846,7 @@ export function FinancialDashboard(props: any) {
       pagoVenta.reset();
       setEsPagoPendiente(false);
       setClienteNombre("");
+      setConceptoVenta("");
       setDarVuelto(false);
       setMontoRecibido("");
       setBusquedaProducto("");
@@ -1026,11 +1043,31 @@ export function FinancialDashboard(props: any) {
   const esVentaPendienteDev = !!(ventaDev && ventaDev.pendiente);
   // Si el cliente debe pagar y la venta ya era pendiente, simplemente aumenta lo que debe (no se cobra ahora)
   const liquidaAhora = !!calcDev && (saldoDev < -TOLERANCIA || (saldoDev > TOLERANCIA && !esVentaPendienteDev));
-  const liqAutoMonto = liquidaAhora
-    ? (metodoLiq === "Divisas" ? Math.abs(saldoDev) : Math.abs(saldoDev) * tasaBcvSegura)
-    : 0;
-  const liqMontoNum = montoLiqManual !== "" ? (parseFloat(montoLiqManual) || 0) : liqAutoMonto;
-  const liqDolares = aDolares(metodoLiq, liqMontoNum);
+  // Monto sugerido a entregar/cobrar
+  const liqObjetivoDolares = liquidaAhora ? Math.abs(saldoDev) : 0;
+  const liqObjetivoBs = liqObjetivoDolares * tasaBcvSegura;
+  // Pagos de la liquidación (uno o varios métodos). Con un solo método y sin monto escrito, se usa el sugerido.
+  const pagosLiqPrev: any[] = liquidaAhora
+    ? formLiq.metodos
+        .map((m) => {
+          const txt = formLiq.montos[m];
+          const escrito = txt !== undefined && txt !== "";
+          const monto = escrito
+            ? (parseFloat(txt) || 0)
+            : (formLiq.metodos.length === 1 ? (m === "Divisas" ? liqObjetivoDolares : liqObjetivoBs) : 0);
+          const montoDolares = !escrito && formLiq.metodos.length === 1 ? liqObjetivoDolares : aDolares(m, monto);
+          return {
+            metodo: m,
+            monto: redondear(monto),
+            montoDolares: redondear(montoDolares),
+            referencia: necesitaReferencia(m) ? (formLiq.refs[m] || "") : ""
+          };
+        })
+        .filter((p) => p.monto > 0)
+    : [];
+  const liqDolares = sumaDolares(pagosLiqPrev);
+  // Equivalente en BS de lo entregado/cobrado (los BS tal cual, las divisas a tasa BCV)
+  const liqBs = pagosLiqPrev.reduce((a, p) => a + (p.metodo === "Divisas" ? p.montoDolares * tasaBcvSegura : p.monto), 0);
 
   const validarDevolucion = (): string | null => {
     if (!ventaDev) return "Selecciona la venta.";
@@ -1041,8 +1078,8 @@ export function FinancialDashboard(props: any) {
       if (sinStock) return `No hay suficiente stock de ${products.find((p) => p.id === sinStock)?.nombre || "un producto nuevo"}.`;
     }
     if (liquidaAhora) {
-      if (liqMontoNum <= 0) return saldoDev < 0 ? "Indica el monto a entregar al cliente." : "Indica el monto que paga el cliente.";
-      if (necesitaReferencia(metodoLiq) && refLiq.length !== 4) return "Ingresa los 4 últimos dígitos de la referencia.";
+      if (pagosLiqPrev.length === 0) return saldoDev < 0 ? "Indica el monto a entregar al cliente." : "Indica el monto que paga el cliente.";
+      if (pagosLiqPrev.some((p) => necesitaReferencia(p.metodo) && p.referencia.length !== 4)) return "Ingresa los 4 últimos dígitos de la referencia.";
       if (saldoDev > 0 && liqDolares < saldoDev - TOLERANCIA) return `El cliente debe pagar ${fmtDolaresYBs(saldoDev)}.`;
       if (saldoDev < 0 && liqDolares > -saldoDev + TOLERANCIA) return `No puedes entregar más de ${fmtDolaresYBs(-saldoDev)}.`;
     }
@@ -1057,9 +1094,8 @@ export function FinancialDashboard(props: any) {
     setDevSel({});
     setTipoDevolucion("devolucion");
     setCambioNuevos([]);
-    setMetodoLiq("Efectivo");
-    setMontoLiqManual("");
-    setRefLiq("");
+    formLiq.reset();
+    setBusquedaCambio("");
     setComisionDevolucion("");
   };
 
@@ -1070,24 +1106,26 @@ export function FinancialDashboard(props: any) {
       else n[idx] = 1;
       return n;
     });
-    setMontoLiqManual("");
+    formLiq.resetMontos();
   };
 
   const cambiarCantidadDevolver = (idx: number, delta: number) => {
     if (!ventaDev) return;
     const max = ventaDev.items[idx]?.qty || 1;
     setDevSel((prev) => ({ ...prev, [idx]: Math.min(max, Math.max(1, (prev[idx] || 1) + delta)) }));
-    setMontoLiqManual("");
+    formLiq.resetMontos();
   };
 
   const agregarProductoCambio = (id: string) => {
     if (!id) return;
+    const yaAgregado = cambioNuevos.find((l) => l.id === id)?.qty || 0;
+    if (yaAgregado + 1 > stockDisponibleCambio(id)) return;
     setCambioNuevos((prev) => {
       const ex = prev.find((l) => l.id === id);
       if (ex) return prev.map((l) => (l.id === id ? { ...l, qty: l.qty + 1 } : l));
       return [...prev, { id, qty: 1 }];
     });
-    setMontoLiqManual("");
+    formLiq.resetMontos();
   };
 
   const cambiarCantidadCambio = (id: string, delta: number) => {
@@ -1098,7 +1136,7 @@ export function FinancialDashboard(props: any) {
         return n < 1 ? [] : [{ ...l, qty: n }];
       })
     );
-    setMontoLiqManual("");
+    formLiq.resetMontos();
   };
 
   const procesarDevolucionOCambio = async () => {
@@ -1126,21 +1164,21 @@ export function FinancialDashboard(props: any) {
       let liquidacion: any = null;
       if (liquidaAhora) {
         const signo = saldoDev < 0 ? -1 : 1;
-        const pagoLiq = {
+        const pagosLiq = pagosLiqPrev.map((p) => ({
           fecha,
           tipo: saldoDev < 0 ? "devolucion" : "cambio",
-          metodo: metodoLiq,
-          monto: signo * redondear(liqMontoNum),
-          montoDolares: signo * redondear(liqDolares),
-          referencia: necesitaReferencia(metodoLiq) ? refLiq : ""
-        };
-        pagos = [...pagos, pagoLiq];
+          metodo: p.metodo,
+          monto: signo * p.monto,
+          montoDolares: signo * p.montoDolares,
+          referencia: p.referencia
+        }));
+        pagos = [...pagos, ...pagosLiq];
         liquidacion = {
           sentido: saldoDev < 0 ? "entregar" : "cobrar",
-          metodo: metodoLiq,
-          monto: redondear(liqMontoNum),
+          metodo: Array.from(new Set(pagosLiqPrev.map((p) => p.metodo))).join(" + "),
+          pagos: pagosLiqPrev,
           montoDolares: redondear(liqDolares),
-          montoBs: metodoLiq === "Divisas" ? redondear(liqDolares * tasaBcvSegura) : redondear(liqMontoNum)
+          montoBs: redondear(liqBs)
         };
       }
 
@@ -1271,7 +1309,8 @@ export function FinancialDashboard(props: any) {
     if (
       itemsEditIguales &&
       Math.abs(calcEdit.totalD - ventaEdit.totalDolares) < 0.005 &&
-      Math.abs(calcEdit.totalBs - ventaEdit.totalBs) < 0.005
+      Math.abs(calcEdit.totalBs - ventaEdit.totalBs) < 0.005 &&
+      editConcepto.trim() === (ventaEdit.concepto || "").trim()
     ) return "No hay cambios para guardar.";
     if (liqAhoraEd) {
       if (liqMontoEd <= 0) return saldoEd < 0 ? "Indica el monto a entregar al cliente." : "Indica el monto que paga el cliente.";
@@ -1287,6 +1326,7 @@ export function FinancialDashboard(props: any) {
     setEditVentaId(sale.id);
     setEditItems(sale.items.map((i: any) => ({ ...i })));
     setEditTotal(null);
+    setEditConcepto(sale.concepto || "");
     setEditBusqueda("");
     setEditMetodoLiq("Efectivo");
     setEditMontoLiq("");
@@ -1297,6 +1337,7 @@ export function FinancialDashboard(props: any) {
     setEditVentaId(null);
     setEditItems([]);
     setEditTotal(null);
+    setEditConcepto("");
     setEditBusqueda("");
     setEditMetodoLiq("Efectivo");
     setEditMontoLiq("");
@@ -1381,7 +1422,10 @@ export function FinancialDashboard(props: any) {
         totalDespuesBs: calcEdit.totalBs,
         itemsAntes: textoItems(ventaEdit.items),
         itemsDespues: textoItems(editItems),
-        saldoDolares: saldoEd
+        saldoDolares: saldoEd,
+        ...(editConcepto.trim() !== (ventaEdit.concepto || "").trim()
+          ? { conceptoAntes: ventaEdit.concepto || "", conceptoDespues: editConcepto.trim() }
+          : {})
       };
 
       batch.update(doc(db, COLLECTION_VENTAS, ventaEdit.id), {
@@ -1395,6 +1439,7 @@ export function FinancialDashboard(props: any) {
         referencia: resumenReferencias(pagos),
         pendiente,
         montoPendiente: redondear(montoPendiente),
+        concepto: editConcepto.trim(),
         editada: true,
         fechaEdicion: fecha,
         ediciones: [...(ventaEdit.ediciones || []), registroEdicion]
@@ -1716,9 +1761,34 @@ export function FinancialDashboard(props: any) {
     const reembolsosDolar = Math.abs(sumaDolares(pagosPeriodo.filter((p: any) => p.monto < 0)));
     const totalPorCobrarDolar = ventasPendientes.reduce((acc: number, s: any) => acc + (s.montoPendiente || 0), 0);
 
-    // Los totales de cada venta ya vienen ajustados por devoluciones y cambios
-    const totalDolarPeriodo = ventasPeriodo.reduce((acc, s) => acc + s.totalDolares, 0);
-    const totalBsPeriodo = ventasPeriodo.reduce((acc, s) => acc + s.totalBs, 0);
+    // Lo que cuenta como ingreso es SOLO el dinero cobrado dentro del periodo.
+    // Una venta pendiente de $100 con $10 pagados hoy suma $10 hoy; cada abono suma el día en que se recibe.
+    const bsEquivPagos = (pagos: any[]) =>
+      pagos.reduce((a: number, p: any) => a + (p.metodo === "Divisas" ? (p.montoDolares || 0) * tasaBcvSegura : (p.monto || 0)), 0);
+    const totalCobradoBs = bsEquivPagos(pagosPeriodo);
+
+    // Ventas hechas en el periodo: cuánto se cobró de cada una dentro del periodo y cuánto deben todavía
+    const filasVentas = ventasPeriodo.map((s: any) => {
+      const pagosEnPeriodo = obtenerPagosVenta(s).filter((p: any) => dentroDelFiltro(p.fecha));
+      return {
+        s,
+        cobradoD: sumaDolares(pagosEnPeriodo),
+        cobradoBs: bsEquivPagos(pagosEnPeriodo),
+        debeD: s.pendiente ? (s.montoPendiente || 0) : 0
+      };
+    });
+    const cobradoVentasPeriodoD = filasVentas.reduce((a, f) => a + f.cobradoD, 0);
+    const pendienteVentasPeriodoD = filasVentas.reduce((a, f) => a + f.debeD, 0);
+    // Valor de las ventas hechas (incluye lo no cobrado). Solo informativo, NO es dinero cobrado.
+    const valorVentasPeriodoD = ventasPeriodo.reduce((acc, s) => acc + s.totalDolares, 0);
+
+    // Abonos, pagos finales y ajustes recibidos en el periodo de ventas hechas en otros días
+    const movOtrasVentas = sales
+      .filter((s: any) => !dentroDelFiltro(s.fecha))
+      .flatMap((s: any) => obtenerPagosVenta(s).filter((p: any) => dentroDelFiltro(p.fecha)).map((p: any) => ({ p, s })))
+      .sort((a: any, b: any) => new Date(a.p.fecha).getTime() - new Date(b.p.fecha).getTime());
+    const cobradoOtrasVentasD = movOtrasVentas.reduce((a: number, m: any) => a + (m.p.montoDolares || 0), 0);
+    const horaOFecha = (iso: string) => filtroVentas === "dia" ? new Date(iso).toLocaleTimeString() : new Date(iso).toLocaleString();
 
     const totalDevueltoBs = devPeriodo.reduce((acc, d) => acc + (d.montoReembolsoBs || 0), 0);
     const totalDevueltoDolar = totalDevueltoBs / tasaBcvSegura;
@@ -1765,7 +1835,7 @@ export function FinancialDashboard(props: any) {
         </head>
         <body>
           <h2>MOTO PARTES PIRUETA</h2>
-          <p class="subtitle">Reporte ${etiquetaPeriodo} de Ventas (Neto con Devoluciones)</p>
+          <p class="subtitle">Reporte ${etiquetaPeriodo} de Ventas (solo dinero cobrado en el periodo, neto de devoluciones)</p>
           <div class="info">
             <strong>Fecha del reporte:</strong> ${new Date().toLocaleDateString()} <br>
             <strong>Tasa BCV aplicada:</strong> ${fmtBs(tasaBcv)} BS <br>
@@ -1778,23 +1848,56 @@ export function FinancialDashboard(props: any) {
                 <th>Método de Pago</th>
                 <th>Ref.</th>
                 <th>Productos Vendidos</th>
-                <th class="num">Total ($)</th>
-                <th class="num">Total (BS)</th>
+                <th class="num">Valor venta</th>
+                <th class="num">Cobrado en el periodo</th>
+                <th class="num">Pendiente</th>
               </tr>
             </thead>
             <tbody>
-              ${ventasPeriodo.map(s => `
+              ${filasVentas.map(({ s, cobradoD, cobradoBs, debeD }) => `
                 <tr>
-                  <td>${filtroVentas === "dia" ? new Date(s.fecha).toLocaleTimeString() : new Date(s.fecha).toLocaleString()}</td>
-                  <td>${escapeHtml(s.metodoPago)}${s.pendiente ? `<br><strong style="color:#b45309;">&#9888; Pendiente: ${escapeHtml(s.cliente)} (debe $${(s.montoPendiente || 0).toFixed(2)})</strong>` : ""}</td>
+                  <td>${horaOFecha(s.fecha)}</td>
+                  <td>${escapeHtml(s.metodoPago)}${s.pendiente ? `<br><strong style="color:#b45309;">&#9888; Pendiente: ${escapeHtml(s.cliente)}</strong>` : ""}</td>
                   <td>${escapeHtml(s.referencia) || "N/A"}</td>
-                  <td>${s.items.length > 0 ? s.items.map((i: any) => `${i.qty}x ${escapeHtml(i.nombre)}`).join(", ") : "<em>Venta devuelta por completo</em>"}</td>
-                  <td class="num">$${s.totalDolares.toFixed(2)}</td>
-                  <td class="num">${fmtBs(s.totalBs)} BS</td>
+                  <td>${s.items.length > 0 ? s.items.map((i: any) => `${i.qty}x ${escapeHtml(i.nombre)}`).join(", ") : "<em>Venta devuelta por completo</em>"}${s.concepto ? `<br><em style="color:#475569;">Concepto: ${escapeHtml(s.concepto)}</em>` : ""}</td>
+                  <td class="num">$${s.totalDolares.toFixed(2)}<br><span style="font-size:11px;color:#64748b;">${fmtBs(s.totalBs)} BS</span></td>
+                  <td class="num"><strong>$${cobradoD.toFixed(2)}</strong><br><span style="font-size:11px;color:#64748b;">${fmtBs(cobradoBs)} BS</span></td>
+                  <td class="num" style="${debeD > 0 ? "color:#b45309;font-weight:bold;" : ""}">${debeD > 0 ? `$${debeD.toFixed(2)}` : "—"}</td>
                 </tr>
               `).join("")}
             </tbody>
           </table>
+
+          ${movOtrasVentas.length > 0 ? `
+          <div class="dev-box" style="border-color:#10b981; background:#f0fdf4;">
+            <h3 style="margin: 0 0 8px 0; color: #047857; font-size: 15px;">Abonos y pagos recibidos de ventas de días anteriores (${movOtrasVentas.length})</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha / Hora del pago</th>
+                  <th>Cliente / Venta</th>
+                  <th>Tipo</th>
+                  <th>Método</th>
+                  <th class="num">Monto</th>
+                  <th class="num">$ equiv.</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${movOtrasVentas.map(({ p, s }: any) => `
+                  <tr>
+                    <td>${horaOFecha(p.fecha)}</td>
+                    <td>${escapeHtml(s.cliente || "Sin nombre")}<br><span style="font-size:11px;color:#64748b;">Venta del ${new Date(s.fecha).toLocaleDateString()} (ID: ${escapeHtml(s.id.slice(0, 8))})${s.pendiente ? ` · aún debe $${(s.montoPendiente || 0).toFixed(2)}` : " · pagada por completo"}</span></td>
+                    <td>${escapeHtml(etiquetaTipoPago(p.tipo))}</td>
+                    <td>${escapeHtml(p.metodo)}${p.referencia ? ` (Ref: ${escapeHtml(p.referencia)})` : ""}</td>
+                    <td class="num">${fmtPago(p)}</td>
+                    <td class="num">$${(p.montoDolares || 0).toFixed(2)}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+            <p style="margin: 8px 0 0 0; font-size: 14px; text-align: right;"><strong>Total recibido de ventas anteriores: $${cobradoOtrasVentasD.toFixed(2)}</strong></p>
+          </div>
+          ` : ""}
 
           <div class="dev-box">
             <h3 style="margin: 0 0 8px 0; color: #b45309; font-size: 15px;">Resumen de Devoluciones del Periodo</h3>
@@ -1811,11 +1914,13 @@ export function FinancialDashboard(props: any) {
               <div><span>Transferencia (BS):</span> <strong>${fmtBs(transferenciaBs)} BS</strong></div>
             </div>
             <div class="total-final">
-              <p>Total cobrado ($ equivalente): $${totalCobradoDolar.toFixed(2)}</p>
-              <p>Reembolsos entregados en el periodo ($ equivalente): $${reembolsosDolar.toFixed(2)}</p>
-              <p>Total Neto Vendido ($): $${totalDolarPeriodo.toFixed(2)}</p>
-              <p>Total Neto Vendido (BS): ${fmtBs(totalBsPeriodo)} BS</p>
+              <p style="font-size:13px;font-weight:normal;">Cobrado de las ventas del periodo: $${cobradoVentasPeriodoD.toFixed(2)}</p>
+              ${movOtrasVentas.length > 0 ? `<p style="font-size:13px;font-weight:normal;">Abonos/pagos de ventas anteriores: $${cobradoOtrasVentasD.toFixed(2)}</p>` : ""}
+              <p style="font-size:13px;font-weight:normal;">Reembolsos entregados en el periodo (ya descontados): $${reembolsosDolar.toFixed(2)}</p>
+              <p style="font-size:18px;color:#047857;">TOTAL COBRADO EN EL PERIODO: $${totalCobradoDolar.toFixed(2)} (${fmtBs(totalCobradoBs)} BS equiv.)</p>
+              <p style="color:#b45309;">Quedó pendiente de las ventas del periodo: $${pendienteVentasPeriodoD.toFixed(2)}</p>
               <p style="color:#b45309;">Pendiente por cobrar (todos los clientes): $${totalPorCobrarDolar.toFixed(2)}</p>
+              <p style="font-size:12px;font-weight:normal;color:#64748b;">Valor de las ventas realizadas en el periodo (incluye lo no cobrado, solo informativo): $${valorVentasPeriodoD.toFixed(2)}</p>
             </div>
           </div>
 
@@ -2325,6 +2430,16 @@ export function FinancialDashboard(props: any) {
                             )}
                           </div>
                           <p className="text-xs text-gray-400 mt-2">{new Date(sale.fecha).toLocaleString()} (ID: {sale.id.slice(0, 8)})</p>
+                          {sale.concepto && (
+                            <p className="text-xs text-gray-700 mt-2 bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5 whitespace-pre-line">
+                              <strong>Concepto:</strong> {sale.concepto}
+                            </p>
+                          )}
+                          {sale.pendiente && (
+                            <p className="text-[11px] text-amber-700 font-bold mt-1">
+                              {sale.cliente || "Cliente"} · Cobrado: ${Math.max(0, sumaDolares(obtenerPagosVenta(sale))).toFixed(2)} · Debe: ${(sale.montoPendiente || 0).toFixed(2)}
+                            </p>
+                          )}
                           {sale.editada && (
                             <p className="text-[11px] text-blue-700 font-bold mt-1">
                               Venta editada{sale.fechaEdicion ? `: ${new Date(sale.fechaEdicion).toLocaleString()}` : ""}
@@ -2418,6 +2533,7 @@ export function FinancialDashboard(props: any) {
                           <p className="font-bold text-gray-900">{sale.cliente || "Cliente sin nombre"}</p>
                           <p className="text-xs text-gray-400">{new Date(sale.fecha).toLocaleString()} (ID: {sale.id.slice(0, 8)})</p>
                           <p className="text-[11px] text-gray-500 mt-1">{sale.items.map((i: any) => `${i.qty}x ${i.nombre}`).join(", ")}</p>
+                          {sale.concepto && <p className="text-[11px] text-gray-600 mt-0.5"><strong>Concepto:</strong> {sale.concepto}</p>}
                         </div>
                       </div>
                       <div className="text-right">
@@ -2471,10 +2587,12 @@ export function FinancialDashboard(props: any) {
                         <div className="text-right">
                           {dev.liquidacion && dev.liquidacion.sentido === "cobrar" ? (
                             <p className="text-sm font-black text-emerald-700">
-                              Cobrado al cliente: {dev.liquidacion.metodo === "Divisas" ? `$${dev.liquidacion.monto.toFixed(2)}` : `${fmtBs(dev.liquidacion.monto)} BS`}
+                              Cobrado al cliente: {totalLiquidacion(dev.liquidacion)}
                             </p>
                           ) : (
-                            <p className="text-sm font-black text-amber-700">Reembolso: {fmtBs(dev.montoReembolsoBs || 0)} BS</p>
+                            <p className="text-sm font-black text-amber-700">
+                              Reembolso: {dev.liquidacion ? totalLiquidacion(dev.liquidacion) : `${fmtBs(dev.montoReembolsoBs || 0)} BS`}
+                            </p>
                           )}
                           <p className="text-xs text-gray-500 font-medium">Comisión: {dev.comision || "N/A"}</p>
                         </div>
@@ -2496,7 +2614,7 @@ export function FinancialDashboard(props: any) {
                         {dev.liquidacion && (
                           <p>
                             <strong>{dev.liquidacion.sentido === "entregar" ? "Entregado al cliente:" : "Cobrado al cliente:"}</strong>{" "}
-                            {dev.liquidacion.metodo === "Divisas" ? `$${dev.liquidacion.monto.toFixed(2)}` : `${fmtBs(dev.liquidacion.monto)} BS`} ({dev.liquidacion.metodo})
+                            {textoLiquidacion(dev.liquidacion)}
                           </p>
                         )}
                       </div>
@@ -2783,6 +2901,12 @@ export function FinancialDashboard(props: any) {
                 <span className="text-xs font-bold text-gray-500 uppercase">Cliente</span>
                 <span className="text-sm font-black text-gray-900">{ventaPendienteActual.cliente || "Sin nombre"}</span>
               </div>
+              {ventaPendienteActual.concepto && (
+                <div className="flex justify-between items-start gap-3">
+                  <span className="text-xs font-bold text-gray-500 uppercase">Concepto</span>
+                  <span className="text-xs font-medium text-gray-800 text-right whitespace-pre-line">{ventaPendienteActual.concepto}</span>
+                </div>
+              )}
               <div className="flex justify-between items-center">
                 <span className="text-xs font-bold text-gray-500 uppercase">Total de la venta</span>
                 <span className="text-sm font-bold text-gray-700">${ventaPendienteActual.totalDolares.toFixed(2)}</span>
@@ -3140,7 +3264,7 @@ export function FinancialDashboard(props: any) {
                     type="text"
                     value={busquedaVentaDev}
                     onChange={(e) => setBusquedaVentaDev(e.target.value)}
-                    placeholder="Buscar por ID de venta o nombre del repuesto..."
+                    placeholder="Buscar por ID, repuesto, cliente o concepto..."
                     className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-500 bg-gray-50/50"
                   />
                 </div>
@@ -3150,6 +3274,8 @@ export function FinancialDashboard(props: any) {
                     {sales.filter(s =>
                       s.items.length > 0 && (
                         s.id.toLowerCase().includes(busquedaVentaDev.toLowerCase()) ||
+                        (s.concepto || "").toLowerCase().includes(busquedaVentaDev.toLowerCase()) ||
+                        (s.cliente || "").toLowerCase().includes(busquedaVentaDev.toLowerCase()) ||
                         s.items.some((i: any) => i.nombre.toLowerCase().includes(busquedaVentaDev.toLowerCase()))
                       )
                     ).map(sale => (
@@ -3159,7 +3285,7 @@ export function FinancialDashboard(props: any) {
                           <p className="text-[11px] text-gray-500">{sale.items.map((i: any) => `${i.qty}x ${i.nombre}`).join(", ")}</p>
                         </div>
                         <Button
-                          onClick={() => { setVentaDevId(sale.id); setBusquedaVentaDev(""); setDevSel({}); setCambioNuevos([]); setMontoLiqManual(""); }}
+                          onClick={() => { setVentaDevId(sale.id); setBusquedaVentaDev(""); setDevSel({}); setCambioNuevos([]); formLiq.resetMontos(); }}
                           size="sm"
                           className="bg-amber-600 hover:bg-amber-700 text-white text-xs cursor-pointer"
                         >
@@ -3181,7 +3307,7 @@ export function FinancialDashboard(props: any) {
                         <p className="text-[11px] text-amber-700 font-bold mt-0.5">Esta venta tiene un pago pendiente de ${(ventaDev.montoPendiente || 0).toFixed(2)}</p>
                       )}
                     </div>
-                    <button onClick={() => { setVentaDevId(null); setDevSel({}); setCambioNuevos([]); setMontoLiqManual(""); }} className="text-xs text-red-600 font-bold hover:underline cursor-pointer">Cambiar venta</button>
+                    <button onClick={() => { setVentaDevId(null); setDevSel({}); setCambioNuevos([]); formLiq.resetMontos(); }} className="text-xs text-red-600 font-bold hover:underline cursor-pointer">Cambiar venta</button>
                   </div>
                   <p className="text-xs font-bold text-gray-600 uppercase">2. Selecciona los productos que se devuelven (puedes elegir varios):</p>
                   <div className="space-y-2">
@@ -3241,14 +3367,14 @@ export function FinancialDashboard(props: any) {
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
-                        onClick={() => { setTipoDevolucion("devolucion"); setMontoLiqManual(""); }}
+                        onClick={() => { setTipoDevolucion("devolucion"); formLiq.resetMontos(); }}
                         className={cn("py-2.5 px-3 text-xs font-bold rounded-xl border transition cursor-pointer text-center", tipoDevolucion === "devolucion" ? "bg-amber-600 text-white border-amber-600 shadow-sm" : "bg-white text-gray-700 border-gray-200")}
                       >
                         Devolución / Reembolso
                       </button>
                       <button
                         type="button"
-                        onClick={() => { setTipoDevolucion("cambio"); setMontoLiqManual(""); }}
+                        onClick={() => { setTipoDevolucion("cambio"); formLiq.resetMontos(); }}
                         className={cn("py-2.5 px-3 text-xs font-bold rounded-xl border transition cursor-pointer text-center", tipoDevolucion === "cambio" ? "bg-amber-600 text-white border-amber-600 shadow-sm" : "bg-white text-gray-700 border-gray-200")}
                       >
                         Cambio por otros productos
@@ -3259,22 +3385,50 @@ export function FinancialDashboard(props: any) {
                   {tipoDevolucion === "cambio" && (
                     <div className="space-y-3">
                       <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Agrega los productos nuevos de reemplazo</label>
-                        <select
-                          value=""
-                          onChange={(e) => agregarProductoCambio(e.target.value)}
-                          className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                        >
-                          <option value="">-- Elige un producto del inventario --</option>
-                          {[...products]
-                            .filter((p) => p.cantidad > 0 || devueltoPorId[p.id])
-                            .sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" }))
-                            .map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.codigo} · {p.nombre} (Stock: {p.cantidad}) · ${calcularPrecios(p.pCompra).pVenta.toFixed(2)}
-                              </option>
-                            ))}
-                        </select>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Busca y agrega los productos nuevos de reemplazo</label>
+                        <div className="relative">
+                          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
+                          <input
+                            type="text"
+                            value={busquedaCambio}
+                            onChange={(e) => setBusquedaCambio(e.target.value)}
+                            placeholder="Escribe el nombre o código del repuesto..."
+                            className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                          />
+                        </div>
+                        {busquedaCambio.trim() !== "" && (() => {
+                          const q = busquedaCambio.trim().toLowerCase();
+                          const resultados = [...products]
+                            .filter((p) => (p.nombre || "").toLowerCase().includes(q) || (p.codigo || "").toLowerCase().includes(q))
+                            .sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" }));
+                          return (
+                            <div className="mt-2 bg-white border border-gray-200 rounded-xl shadow-lg max-h-56 overflow-y-auto divide-y divide-gray-100">
+                              {resultados.length > 0 ? resultados.map((prod) => {
+                                const calc = calcularPrecios(prod.pCompra);
+                                const libre = stockDisponibleCambio(prod.id) - (nuevoPorId[prod.id] || 0);
+                                return (
+                                  <div key={prod.id} className="p-3 flex justify-between items-center gap-3 hover:bg-gray-50">
+                                    <div>
+                                      <p className="font-bold text-gray-900 text-sm">{prod.nombre}</p>
+                                      <p className="text-xs font-mono font-bold text-gray-600">Código: {prod.codigo}</p>
+                                      <p className="text-xs text-gray-500">Stock: {libre} | Venta: ${calc.pVenta.toFixed(2)} ({fmtBs(calc.pFinalBs)} BS)</p>
+                                    </div>
+                                    <Button
+                                      onClick={() => { agregarProductoCambio(prod.id); setBusquedaCambio(""); }}
+                                      size="sm"
+                                      className="bg-amber-600 hover:bg-amber-700 text-white text-xs cursor-pointer"
+                                      disabled={libre <= 0}
+                                    >
+                                      {libre > 0 ? "Agregar" : "Agotado"}
+                                    </Button>
+                                  </div>
+                                );
+                              }) : (
+                                <p className="p-3 text-xs text-gray-500 text-center">No se encontraron productos.</p>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {lineasCambio.map((l) => {
@@ -3356,47 +3510,27 @@ export function FinancialDashboard(props: any) {
                           <p className="text-xs font-bold text-gray-600 uppercase">
                             {saldoDev < 0 ? "¿Con qué le entregas el dinero?" : "¿Con qué paga la diferencia?"}
                           </p>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                            {METODOS_PAGO.map((metodo) => (
-                              <button
-                                key={metodo}
-                                type="button"
-                                onClick={() => { setMetodoLiq(metodo); setMontoLiqManual(""); setRefLiq(""); }}
-                                className={cn(
-                                  "py-2 px-3 text-xs font-bold rounded-xl border transition text-center cursor-pointer",
-                                  metodoLiq === metodo ? "bg-amber-600 text-white border-amber-600 shadow-sm" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
-                                )}
-                              >
-                                {metodo}
-                              </button>
-                            ))}
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                              Monto a {saldoDev < 0 ? "entregar" : "cobrar"} {metodoLiq === "Divisas" ? "($)" : "(BS)"}
-                            </label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={montoLiqManual}
-                              onChange={(e) => setMontoLiqManual(e.target.value)}
-                              placeholder={liqAutoMonto.toFixed(2)}
-                              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                            />
-                            <p className="text-[11px] text-gray-500 mt-1">
-                              Sugerido: {metodoLiq === "Divisas" ? `$${liqAutoMonto.toFixed(2)}` : `${fmtBs(liqAutoMonto)} BS`}. Si aplicas una comisión, escribe el monto final que entregas.
+                          <SelectorPagos
+                            form={formLiq}
+                            auto={false}
+                            objetivoDolares={liqObjetivoDolares}
+                            objetivoBs={liqObjetivoBs}
+                            pagadoDolares={liqDolares}
+                            tasa={tasaBcvSegura}
+                            sugerirMonto
+                            titulo={saldoDev < 0 ? "Entregar con" : "Cobrar con"}
+                            etiquetaTotal={saldoDev < 0 ? "Total a entregar" : "Total a cobrar"}
+                            etiquetaPorPagar={saldoDev < 0 ? "Falta por entregar" : "Falta por cobrar"}
+                          />
+                          <p className="text-[11px] text-gray-500">
+                            Sugerido: ${liqObjetivoDolares.toFixed(2)} · {fmtBs(liqObjetivoBs)} BS.
+                            {formLiq.metodos.length === 1 ? " Si dejas el monto vacío se usa el sugerido." : ""}
+                            {saldoDev < 0 ? " Si aplicas una comisión, escribe el monto final que entregas." : ""}
+                          </p>
+                          {pagosLiqPrev.length > 0 && (
+                            <p className="text-[11px] font-bold text-gray-700">
+                              {saldoDev < 0 ? "Entregarás" : "Cobrarás"}: ${liqDolares.toFixed(2)} · {fmtBs(liqBs)} BS equivalente
                             </p>
-                          </div>
-                          {necesitaReferencia(metodoLiq) && (
-                            <input
-                              type="text"
-                              maxLength={4}
-                              value={refLiq}
-                              onChange={(e) => setRefLiq(e.target.value.replace(/\D/g, ""))}
-                              placeholder="Referencia: últimos 4 dígitos (Ej: 4829)"
-                              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                            />
                           )}
                         </div>
                       )}
@@ -3676,6 +3810,19 @@ export function FinancialDashboard(props: any) {
                   )}
                 </div>
               )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                Concepto <span className="normal-case font-medium text-gray-400">(opcional: información extra de la venta)</span>
+              </label>
+              <textarea
+                value={editConcepto}
+                onChange={(e) => setEditConcepto(e.target.value)}
+                rows={2}
+                placeholder="Ej: Para la moto Bera azul, garantía de 15 días..."
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+              />
             </div>
 
             {errorEdicion && (
@@ -4019,6 +4166,19 @@ export function FinancialDashboard(props: any) {
                     )}
                   </div>
                 )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                  Concepto <span className="normal-case font-medium text-gray-400">(opcional: información extra de la venta)</span>
+                </label>
+                <textarea
+                  value={conceptoVenta}
+                  onChange={(e) => setConceptoVenta(e.target.value)}
+                  rows={2}
+                  placeholder="Ej: Para la moto Bera azul, garantía de 15 días, cliente pasa el viernes..."
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-y"
+                />
               </div>
 
               {errorVenta && carrito.length > 0 && (
