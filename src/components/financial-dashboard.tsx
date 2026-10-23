@@ -126,6 +126,7 @@ const etiquetaTipoPago = (tipo: string) =>
   : tipo === "abono" ? "Abono"
   : tipo === "final" ? "Pago final"
   : tipo === "devolucion" ? "Reembolso"
+  : tipo === "vuelto" ? "Vuelto entregado"
   : tipo === "cambio" ? "Cobro por cambio"
   : "Pago inicial";
 
@@ -367,6 +368,10 @@ export function FinancialDashboard(props: any) {
   const [darVuelto, setDarVuelto] = useState(false);
   const [metodoVuelto, setMetodoVuelto] = useState("Divisas");
   const [montoRecibido, setMontoRecibido] = useState("");
+  // Vuelto mixto: parte del vuelto en divisa ($) y parte en efectivo (BS)
+  const [vueltoMixto, setVueltoMixto] = useState(false);
+  const [vueltoMixtoD, setVueltoMixtoD] = useState("");
+  const [vueltoMixtoBs, setVueltoMixtoBs] = useState("");
   const [filtroVentas, setFiltroVentas] = useState("dia");
 
   // Estados de Pagos Pendientes
@@ -750,9 +755,38 @@ export function FinancialDashboard(props: any) {
     ? { metodo: metodoVueltoSel, monto: restanteMetodo, montoDolares: restanteDolares }
     : null;
 
-  const pagosVentaPreview = armarPagos(
-    pagoVenta, autoCompleto, totalVentaDolares, totalVentaBs, "venta", "", pagoFijoVuelto
-  );
+  // --- VUELTO MIXTO: una parte del vuelto en divisa ($) y otra en efectivo (BS) ---
+  const vueltoMixtoActivo = vueltoActivo && vueltoMixto;
+  const mixDivisaNum = parseFloat(vueltoMixtoD) || 0;
+  const mixBsNum = parseFloat(vueltoMixtoBs) || 0;
+  // Vuelto que corresponde dar en total (en $) y lo que ya se repartió entre divisa y efectivo (BS a tasa BCV)
+  const vueltoRequeridoDolares = vueltoActivo ? Math.max(0, recibidoDolares - restanteDolares) : 0;
+  const vueltoDadoMixtoDolares = mixDivisaNum + mixBsNum / tasaBcvSegura;
+  const vueltoMixtoRestanteDolares = vueltoRequeridoDolares - vueltoDadoMixtoDolares; // > 0: falta dar. < 0: te pasas
+
+  // Con vuelto mixto cada método queda con su monto neto: lo recibido menos el vuelto que salió de esa caja.
+  // Ej: recibes $20 y das $5 + 850 BS -> Divisas +$15 y Efectivo -850 BS (el vuelto en BS sale de la caja de efectivo).
+  const armarPagosMixto = (fecha: string) => {
+    const neto: Record<string, number> = {};
+    pagosOtros.forEach((p) => { neto[p.metodo] = (neto[p.metodo] || 0) + p.monto; });
+    neto[metodoVueltoSel] = (neto[metodoVueltoSel] || 0) + recibidoNum;
+    neto["Divisas"] = (neto["Divisas"] || 0) - mixDivisaNum;
+    neto["Efectivo"] = (neto["Efectivo"] || 0) - mixBsNum;
+    return Object.entries(neto)
+      .filter(([, monto]) => Math.abs(monto) > 0.004)
+      .map(([m, monto]) => ({
+        fecha,
+        tipo: monto < 0 ? "vuelto" : "venta",
+        metodo: m,
+        monto: redondear(monto),
+        montoDolares: redondear(aDolares(m, monto)),
+        referencia: necesitaReferencia(m) ? (pagoVenta.refs[m] || "") : ""
+      }));
+  };
+
+  const pagosVentaPreview = vueltoMixtoActivo
+    ? armarPagosMixto("")
+    : armarPagos(pagoVenta, autoCompleto, totalVentaDolares, totalVentaBs, "venta", "", pagoFijoVuelto);
   const pagadoVentaDolares = sumaDolares(pagosVentaPreview);
   const pendienteVentaDolares = Math.max(0, totalVentaDolares - pagadoVentaDolares);
 
@@ -768,6 +802,10 @@ export function FinancialDashboard(props: any) {
     }
     if (vueltoActivo && recibidoDolares < restanteDolares - TOLERANCIA) {
       return "El monto recibido es menor a lo que falta por pagar.";
+    }
+    if (vueltoMixtoActivo) {
+      if (vueltoMixtoRestanteDolares > TOLERANCIA) return `Falta dar ${fmtDolaresYBs(vueltoMixtoRestanteDolares)} de vuelto.`;
+      if (vueltoMixtoRestanteDolares < -TOLERANCIA) return `Estás dando ${fmtDolaresYBs(-vueltoMixtoRestanteDolares)} de más en el vuelto.`;
     }
     if (pagadoVentaDolares < totalVentaDolares - TOLERANCIA) {
       return `Faltan ${fmtDolaresYBs(totalVentaDolares - pagadoVentaDolares)} por cubrir.`;
@@ -787,6 +825,9 @@ export function FinancialDashboard(props: any) {
     setDarVuelto(false);
     setMetodoVuelto("Divisas");
     setMontoRecibido("");
+    setVueltoMixto(false);
+    setVueltoMixtoD("");
+    setVueltoMixtoBs("");
     setBusquedaProducto("");
     setModalVentaOpen(false);
   };
@@ -797,9 +838,9 @@ export function FinancialDashboard(props: any) {
     setGuardandoVenta(true);
     try {
       const fecha = new Date().toISOString();
-      const pagos = armarPagos(
-        pagoVenta, autoCompleto, totalVentaDolares, totalVentaBs, "venta", fecha, pagoFijoVuelto
-      );
+      const pagos = vueltoMixtoActivo
+        ? armarPagosMixto(fecha)
+        : armarPagos(pagoVenta, autoCompleto, totalVentaDolares, totalVentaBs, "venta", fecha, pagoFijoVuelto);
       const montoPendiente = esPagoPendiente
         ? Number(Math.max(0, totalVentaDolares - sumaDolares(pagos)).toFixed(2))
         : 0;
@@ -821,13 +862,24 @@ export function FinancialDashboard(props: any) {
         concepto: conceptoVenta.trim(),
         montoPendiente,
         vuelto: vueltoActivo && vueltoDolares > 0
-          ? {
-              metodo: metodoVueltoSel,
-              recibido: Number(recibidoNum.toFixed(2)),
-              dolares: Number(vueltoDolares.toFixed(2)),
-              bsBcv: Number(vueltoBsBcv.toFixed(2)),
-              bsDivisa: Number(vueltoBsDivisa.toFixed(2))
-            }
+          ? (vueltoMixtoActivo
+              ? {
+                  metodo: metodoVueltoSel,
+                  mixto: true,
+                  recibido: Number(recibidoNum.toFixed(2)),
+                  dolares: Number(vueltoDadoMixtoDolares.toFixed(2)),
+                  bsBcv: Number((vueltoDadoMixtoDolares * tasaBcv).toFixed(2)),
+                  bsDivisa: Number((vueltoDadoMixtoDolares * tasaDivisa).toFixed(2)),
+                  entregadoDivisas: Number(mixDivisaNum.toFixed(2)),
+                  entregadoBs: Number(mixBsNum.toFixed(2))
+                }
+              : {
+                  metodo: metodoVueltoSel,
+                  recibido: Number(recibidoNum.toFixed(2)),
+                  dolares: Number(vueltoDolares.toFixed(2)),
+                  bsBcv: Number(vueltoBsBcv.toFixed(2)),
+                  bsDivisa: Number(vueltoBsDivisa.toFixed(2))
+                })
           : null
       };
 
@@ -849,6 +901,9 @@ export function FinancialDashboard(props: any) {
       setConceptoVenta("");
       setDarVuelto(false);
       setMontoRecibido("");
+      setVueltoMixto(false);
+      setVueltoMixtoD("");
+      setVueltoMixtoBs("");
       setBusquedaProducto("");
       setMetodoVuelto("Divisas");
       setModalVentaOpen(false);
@@ -1758,7 +1813,7 @@ export function FinancialDashboard(props: any) {
       ")";
 
     const totalCobradoDolar = sumaDolares(pagosPeriodo);
-    const reembolsosDolar = Math.abs(sumaDolares(pagosPeriodo.filter((p: any) => p.monto < 0)));
+    const reembolsosDolar = Math.abs(sumaDolares(pagosPeriodo.filter((p: any) => p.monto < 0 && p.tipo !== "vuelto")));
     const totalPorCobrarDolar = ventasPendientes.reduce((acc: number, s: any) => acc + (s.montoPendiente || 0), 0);
 
     // Lo que cuenta como ingreso es SOLO el dinero cobrado dentro del periodo.
@@ -2457,7 +2512,9 @@ export function FinancialDashboard(props: any) {
                           )}
                           {sale.vuelto && (
                             <p className="text-[11px] text-gray-500 mt-1">
-                              {sale.vuelto.metodo === "Efectivo"
+                              {sale.vuelto.mixto
+                                ? `Vuelto mixto entregado: $${(sale.vuelto.entregadoDivisas || 0).toFixed(2)} en divisa + ${fmtBs(sale.vuelto.entregadoBs || 0)} BS en efectivo (≈ $${sale.vuelto.dolares.toFixed(2)})`
+                                : sale.vuelto.metodo === "Efectivo"
                                 ? `Vuelto entregado en efectivo: ${fmtBs(sale.vuelto.bsBcv)} BS (≈ $${sale.vuelto.dolares.toFixed(2)})`
                                 : `Vuelto entregado: $${sale.vuelto.dolares.toFixed(2)} (${fmtBs(sale.vuelto.bsBcv)} BS BCV / ${fmtBs(sale.vuelto.bsDivisa)} BS divisa)`}
                             </p>
@@ -4130,7 +4187,102 @@ export function FinancialDashboard(props: any) {
                         className="w-full px-4 py-2.5 rounded-xl border border-blue-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
-                    {recibidoNum > 0 && recibidoDolares >= restanteDolares - TOLERANCIA && (
+                    <div className="space-y-1">
+                      <label className="block text-xs font-bold text-blue-800 uppercase">Cómo das el vuelto:</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setVueltoMixto(false)}
+                          className={cn(
+                            "py-1.5 px-3 text-xs font-bold rounded-lg border transition cursor-pointer",
+                            !vueltoMixto ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-700 border-blue-200 hover:bg-blue-50"
+                          )}
+                        >
+                          Una sola moneda
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setVueltoMixto(true); setVueltoMixtoD(""); setVueltoMixtoBs(""); }}
+                          className={cn(
+                            "py-1.5 px-3 text-xs font-bold rounded-lg border transition cursor-pointer",
+                            vueltoMixto ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-700 border-blue-200 hover:bg-blue-50"
+                          )}
+                        >
+                          Vuelto mixto ($ + BS)
+                        </button>
+                      </div>
+                    </div>
+
+                    {vueltoMixto && recibidoNum > 0 && recibidoDolares >= restanteDolares - TOLERANCIA && (
+                      <div className="bg-white rounded-xl border border-blue-100 p-3 space-y-3">
+                        <div className="flex justify-between items-center gap-3">
+                          <span className="text-xs font-bold text-gray-600">Vuelto total a dar:</span>
+                          <span className="text-right">
+                            <span className="block text-lg font-black text-blue-700">${vueltoRequeridoDolares.toFixed(2)}</span>
+                            <span className="block text-[11px] font-bold text-gray-500">{fmtBs(vueltoRequeridoDolares * tasaBcvSegura)} BS (tasa BCV)</span>
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] font-bold text-blue-800 uppercase mb-1">Vuelto en divisa ($)</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={vueltoMixtoD}
+                              onChange={(e) => setVueltoMixtoD(e.target.value)}
+                              placeholder="Ej: 5"
+                              className="w-full px-3 py-2 rounded-lg border border-blue-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-blue-800 uppercase mb-1">Vuelto en efectivo (BS)</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={vueltoMixtoBs}
+                              onChange={(e) => setVueltoMixtoBs(e.target.value)}
+                              placeholder="Ej: 850"
+                              className="w-full px-3 py-2 rounded-lg border border-blue-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setVueltoMixtoBs(Math.max(0, (vueltoRequeridoDolares - mixDivisaNum) * tasaBcvSegura).toFixed(2))}
+                            className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 cursor-pointer"
+                          >
+                            Completar el resto en BS
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setVueltoMixtoD(Math.max(0, vueltoRequeridoDolares - mixBsNum / tasaBcvSegura).toFixed(2))}
+                            className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 cursor-pointer"
+                          >
+                            Completar el resto en $
+                          </button>
+                        </div>
+                        <div
+                          className={cn(
+                            "rounded-lg px-3 py-2 text-xs font-bold",
+                            Math.abs(vueltoMixtoRestanteDolares) <= TOLERANCIA ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"
+                          )}
+                        >
+                          {Math.abs(vueltoMixtoRestanteDolares) <= TOLERANCIA
+                            ? "Vuelto completo ✓"
+                            : vueltoMixtoRestanteDolares > 0
+                              ? `Falta dar: ${fmtDolaresYBs(vueltoMixtoRestanteDolares)}`
+                              : `Te estás pasando por: ${fmtDolaresYBs(-vueltoMixtoRestanteDolares)}`}
+                        </div>
+                        <p className="text-[11px] text-gray-500">
+                          Los BS se convierten a $ con la tasa BCV ({fmtBs(tasaBcv)}). El vuelto en BS sale de la caja de efectivo.
+                        </p>
+                      </div>
+                    )}
+
+                    {!vueltoMixto && recibidoNum > 0 && recibidoDolares >= restanteDolares - TOLERANCIA && (
                       <div className="bg-white rounded-xl border border-blue-100 p-3 space-y-1.5">
                         {metodoVueltoSel === "Divisas" ? (
                           <>
