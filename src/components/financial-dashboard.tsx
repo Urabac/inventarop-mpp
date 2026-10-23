@@ -803,11 +803,8 @@ export function FinancialDashboard(props: any) {
     if (vueltoActivo && recibidoDolares < restanteDolares - TOLERANCIA) {
       return "El monto recibido es menor a lo que falta por pagar.";
     }
-    if (vueltoMixtoActivo) {
-      if (vueltoMixtoRestanteDolares > TOLERANCIA) return `Falta dar ${fmtDolaresYBs(vueltoMixtoRestanteDolares)} de vuelto.`;
-      if (vueltoMixtoRestanteDolares < -TOLERANCIA) return `Estás dando ${fmtDolaresYBs(-vueltoMixtoRestanteDolares)} de más en el vuelto.`;
-    }
-    if (pagadoVentaDolares < totalVentaDolares - TOLERANCIA) {
+    // Con vuelto mixto no se exige que el vuelto cuadre: se guarda lo que realmente se recibió y se entregó
+    if (!vueltoMixtoActivo && pagadoVentaDolares < totalVentaDolares - TOLERANCIA) {
       return `Faltan ${fmtDolaresYBs(totalVentaDolares - pagadoVentaDolares)} por cubrir.`;
     }
     return null;
@@ -4273,8 +4270,8 @@ export function FinancialDashboard(props: any) {
                           {Math.abs(vueltoMixtoRestanteDolares) <= TOLERANCIA
                             ? "Vuelto completo ✓"
                             : vueltoMixtoRestanteDolares > 0
-                              ? `Falta dar: ${fmtDolaresYBs(vueltoMixtoRestanteDolares)}`
-                              : `Te estás pasando por: ${fmtDolaresYBs(-vueltoMixtoRestanteDolares)}`}
+                              ? `Falta dar: ${fmtDolaresYBs(vueltoMixtoRestanteDolares)} (puedes confirmar igual)`
+                              : `Te estás pasando por: ${fmtDolaresYBs(-vueltoMixtoRestanteDolares)} (puedes confirmar igual)`}
                         </div>
                         <p className="text-[11px] text-gray-500">
                           Los BS se convierten a $ con la tasa BCV ({fmtBs(tasaBcv)}). El vuelto en BS sale de la caja de efectivo.
