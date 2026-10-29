@@ -374,6 +374,16 @@ export function FinancialDashboard(props: any) {
   const [vueltoMixtoBs, setVueltoMixtoBs] = useState("");
   const [filtroVentas, setFiltroVentas] = useState("dia");
 
+  // Estados para Crear deuda (selector y formulario de préstamo)
+  const [modalDeudaOpen, setModalDeudaOpen] = useState(false);
+  const [modalPrestamoOpen, setModalPrestamoOpen] = useState(false);
+  const [prestamoCliente, setPrestamoCliente] = useState("");
+  const [prestamoMonto, setPrestamoMonto] = useState("");
+  const [prestamoACobrar, setPrestamoACobrar] = useState("");
+  const [prestamoFecha, setPrestamoFecha] = useState("");
+  const [prestamoNota, setPrestamoNota] = useState("");
+  const [guardandoPrestamo, setGuardandoPrestamo] = useState(false);
+
   // Estados de Pagos Pendientes
   const [pendienteId, setPendienteId] = useState<string | null>(null);
   const [modoPendiente, setModoPendiente] = useState<"detalle" | "abonar" | "finalizar">("detalle");
@@ -908,6 +918,85 @@ export function FinancialDashboard(props: any) {
       console.error("Error al procesar la venta en Firebase:", e);
     } finally {
       setTimeout(() => setGuardandoVenta(false), 2000);
+    }
+  };
+
+  // --- CREAR DEUDA (selector: deuda por productos o préstamo) ---
+  const abrirSelectorDeuda = () => setModalDeudaOpen(true);
+
+  const elegirDeudaProductos = () => {
+    setModalDeudaOpen(false);
+    setEsPagoPendiente(true);
+    setModalVentaOpen(true);
+  };
+
+  const cerrarModalPrestamo = () => {
+    setModalPrestamoOpen(false);
+    setPrestamoCliente("");
+    setPrestamoMonto("");
+    setPrestamoACobrar("");
+    setPrestamoFecha("");
+    setPrestamoNota("");
+  };
+
+  const elegirPrestamo = () => {
+    setModalDeudaOpen(false);
+    setPrestamoACobrar("");
+    setPrestamoFecha("");
+    setModalPrestamoOpen(true);
+  };
+
+  const prestamoMontoNum = parseFloat(prestamoMonto) || 0;
+  const prestamoACobrarNum = parseFloat(prestamoACobrar) || 0;
+  const prestamoGananciaNum = prestamoACobrarNum - prestamoMontoNum;
+
+  const validarPrestamo = (): string | null => {
+    if (!prestamoCliente.trim()) return "Escribe el nombre del cliente.";
+    if (prestamoMontoNum <= 0) return "Ingresa cuánto le prestas.";
+    if (prestamoACobrarNum <= 0) return "Ingresa cuánto le vas a cobrar.";
+    if (prestamoACobrarNum < prestamoMontoNum) return "Lo que cobrarás no puede ser menor a lo prestado.";
+    if (!prestamoFecha) return "Selecciona la fecha de pago.";
+    return null;
+  };
+  const errorPrestamo = validarPrestamo();
+
+  const confirmarPrestamo = async () => {
+    if (guardandoPrestamo || validarPrestamo()) return;
+    setGuardandoPrestamo(true);
+    try {
+      const fecha = new Date().toISOString();
+      const nuevoPrestamo = {
+        fecha,
+        tipo: "prestamo",
+        items: [{
+          id: "prestamo",
+          nombre: "Préstamo de dinero",
+          qty: 1,
+          pVenta: redondear(prestamoACobrarNum),
+          pFinalBs: redondear(prestamoACobrarNum * tasaBcvSegura)
+        }],
+        totalDolares: redondear(prestamoACobrarNum),
+        totalBs: redondear(prestamoACobrarNum * tasaBcvSegura),
+        metodoPago: "Pendiente",
+        referencia: "",
+        pagos: [],
+        pendiente: true,
+        cliente: prestamoCliente.trim(),
+        concepto: prestamoNota.trim(),
+        montoPendiente: redondear(prestamoACobrarNum),
+        prestamo: {
+          montoPrestado: redondear(prestamoMontoNum),
+          montoACobrar: redondear(prestamoACobrarNum),
+          ganancia: redondear(prestamoGananciaNum),
+          fechaLimite: prestamoFecha
+        }
+      };
+      await addDoc(collection(db, COLLECTION_VENTAS), nuevoPrestamo);
+      cerrarModalPrestamo();
+    } catch (e: any) {
+      console.error("Error al registrar el préstamo:", e);
+    } finally {
+      setTimeout(() => setGuardandoPrestamo(false), 1200);
     }
   };
 
@@ -2564,10 +2653,15 @@ export function FinancialDashboard(props: any) {
                   <h3 className="text-lg font-bold text-gray-900">Ventas con pago pendiente</h3>
                   <p className="text-xs text-gray-500 mt-0.5">Abre una venta para registrar un abono o finalizar el pago.</p>
                 </div>
-                <div className="text-right">
-                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Total por cobrar</p>
-                  <p className="text-2xl font-black text-amber-600">${totalPendienteDolares.toFixed(2)}</p>
-                  <p className="text-xs font-bold text-gray-500">{fmtBs(totalPendienteDolares * tasaBcv)} BS</p>
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Total por cobrar</p>
+                    <p className="text-2xl font-black text-amber-600">${totalPendienteDolares.toFixed(2)}</p>
+                    <p className="text-xs font-bold text-gray-500">{fmtBs(totalPendienteDolares * tasaBcv)} BS</p>
+                  </div>
+                  <Button onClick={abrirSelectorDeuda} className="bg-amber-600 hover:bg-amber-700 text-white font-bold flex items-center gap-2 cursor-pointer">
+                    <Plus className="w-4 h-4" /> Crear deuda
+                  </Button>
                 </div>
               </div>
 
@@ -2584,10 +2678,21 @@ export function FinancialDashboard(props: any) {
                           <AlertTriangle className="w-5 h-5" />
                         </div>
                         <div>
-                          <p className="font-bold text-gray-900">{sale.cliente || "Cliente sin nombre"}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold text-gray-900">{sale.cliente || "Cliente sin nombre"}</p>
+                            {sale.tipo === "prestamo" && (
+                              <span className="text-[10px] font-black uppercase px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">Préstamo</span>
+                            )}
+                          </div>
                           <p className="text-xs text-gray-400">{new Date(sale.fecha).toLocaleString()} (ID: {sale.id.slice(0, 8)})</p>
-                          <p className="text-[11px] text-gray-500 mt-1">{sale.items.map((i: any) => `${i.qty}x ${i.nombre}`).join(", ")}</p>
-                          {sale.concepto && <p className="text-[11px] text-gray-600 mt-0.5"><strong>Concepto:</strong> {sale.concepto}</p>}
+                          {sale.tipo === "prestamo" ? (
+                            <p className="text-[11px] text-gray-500 mt-1">
+                              Prestado: ${(sale.prestamo?.montoPrestado || 0).toFixed(2)} · Vence: {sale.prestamo?.fechaLimite || "—"}
+                            </p>
+                          ) : (
+                            <p className="text-[11px] text-gray-500 mt-1">{sale.items.map((i: any) => `${i.qty}x ${i.nombre}`).join(", ")}</p>
+                          )}
+                          {sale.concepto && <p className="text-[11px] text-gray-600 mt-0.5"><strong>Nota:</strong> {sale.concepto}</p>}
                         </div>
                       </div>
                       <div className="text-right">
@@ -2929,6 +3034,172 @@ export function FinancialDashboard(props: any) {
       </main>
 
       {/* MODAL: DETALLE DE PAGO PENDIENTE */}
+      {/* MODAL: SELECCIONAR TIPO DE DEUDA */}
+      {modalDeudaOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100 space-y-5">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-black text-gray-900">Crear deuda</h3>
+              <button
+                onClick={() => setModalDeudaOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-xs text-gray-500">Elige qué tipo de deuda quieres registrar.</p>
+
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={elegirDeudaProductos}
+                className="w-full text-left p-4 rounded-2xl border border-gray-200 hover:border-amber-500 hover:shadow-md transition cursor-pointer flex items-center gap-4"
+              >
+                <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl">
+                  <ShoppingBag className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="font-bold text-gray-900">Deuda por productos</p>
+                  <p className="text-xs text-gray-500">El cliente se lleva productos y paga después.</p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={elegirPrestamo}
+                className="w-full text-left p-4 rounded-2xl border border-gray-200 hover:border-blue-500 hover:shadow-md transition cursor-pointer flex items-center gap-4"
+              >
+                <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
+                  <DollarSign className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="font-bold text-gray-900">Préstamo</p>
+                  <p className="text-xs text-gray-500">Le prestas dinero y defines cuánto te debe devolver y cuándo.</p>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: NUEVO PRÉSTAMO */}
+      {modalPrestamoOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto space-y-5">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
+                  <DollarSign className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-gray-900">Nuevo préstamo</h3>
+                  <p className="text-xs text-gray-500">Se guardará en Pagos pendientes como una deuda.</p>
+                </div>
+              </div>
+              <button
+                onClick={cerrarModalPrestamo}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nombre del cliente</label>
+                <input
+                  type="text"
+                  value={prestamoCliente}
+                  onChange={(e) => setPrestamoCliente(e.target.value)}
+                  placeholder="Ej: Juan Pérez"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">¿Cuánto le prestas? ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={prestamoMonto}
+                    onChange={(e) => {
+                      setPrestamoMonto(e.target.value);
+                      // Por defecto, lo que se cobra es igual a lo prestado (sin interés); se puede editar.
+                      if (!prestamoACobrar) setPrestamoACobrar(e.target.value);
+                    }}
+                    placeholder="0.00"
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">¿Cuánto le vas a cobrar? ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={prestamoACobrar}
+                    onChange={(e) => setPrestamoACobrar(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              {prestamoMontoNum > 0 && prestamoACobrarNum > 0 && (
+                <div className="flex justify-between items-center text-xs font-bold bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
+                  <span className="text-blue-900">Ganancia por el préstamo:</span>
+                  <span className="text-blue-900">${prestamoGananciaNum.toFixed(2)} ({fmtBs(prestamoGananciaNum * tasaBcvSegura)} BS)</span>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Fecha en que debe pagar</label>
+                <input
+                  type="date"
+                  value={prestamoFecha}
+                  onChange={(e) => setPrestamoFecha(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nota (opcional)</label>
+                <input
+                  type="text"
+                  value={prestamoNota}
+                  onChange={(e) => setPrestamoNota(e.target.value)}
+                  placeholder="Ej: Préstamo para repuestos de su moto"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              {errorPrestamo && (prestamoCliente || prestamoMonto || prestamoACobrar || prestamoFecha) && (
+                <p className="text-xs font-bold text-amber-700">{errorPrestamo}</p>
+              )}
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={cerrarModalPrestamo}
+                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <Button
+                  onClick={confirmarPrestamo}
+                  disabled={!!errorPrestamo || guardandoPrestamo}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-sm cursor-pointer"
+                >
+                  {guardandoPrestamo ? "Guardando..." : "Registrar préstamo"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {ventaPendienteActual && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto space-y-5">
@@ -2955,9 +3226,25 @@ export function FinancialDashboard(props: any) {
                 <span className="text-xs font-bold text-gray-500 uppercase">Cliente</span>
                 <span className="text-sm font-black text-gray-900">{ventaPendienteActual.cliente || "Sin nombre"}</span>
               </div>
+              {ventaPendienteActual.tipo === "prestamo" && (
+                <div className="space-y-1 bg-blue-50 border border-blue-100 rounded-xl p-3">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-bold text-blue-900 uppercase">Monto prestado</span>
+                    <span className="font-bold text-blue-900">${(ventaPendienteActual.prestamo?.montoPrestado || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-bold text-blue-900 uppercase">Ganancia esperada</span>
+                    <span className="font-bold text-blue-900">${(ventaPendienteActual.prestamo?.ganancia || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-bold text-blue-900 uppercase">Fecha de pago</span>
+                    <span className="font-bold text-blue-900">{ventaPendienteActual.prestamo?.fechaLimite || "—"}</span>
+                  </div>
+                </div>
+              )}
               {ventaPendienteActual.concepto && (
                 <div className="flex justify-between items-start gap-3">
-                  <span className="text-xs font-bold text-gray-500 uppercase">Concepto</span>
+                  <span className="text-xs font-bold text-gray-500 uppercase">{ventaPendienteActual.tipo === "prestamo" ? "Nota" : "Concepto"}</span>
                   <span className="text-xs font-medium text-gray-800 text-right whitespace-pre-line">{ventaPendienteActual.concepto}</span>
                 </div>
               )}
