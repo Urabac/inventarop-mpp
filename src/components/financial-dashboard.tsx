@@ -378,6 +378,7 @@ export function FinancialDashboard(props: any) {
   const [modalDeudaOpen, setModalDeudaOpen] = useState(false);
   const [modalPrestamoOpen, setModalPrestamoOpen] = useState(false);
   const [prestamoCliente, setPrestamoCliente] = useState("");
+  const [prestamoMetodo, setPrestamoMetodo] = useState("Divisas");
   const [prestamoMonto, setPrestamoMonto] = useState("");
   const [prestamoACobrar, setPrestamoACobrar] = useState("");
   const [prestamoFecha, setPrestamoFecha] = useState("");
@@ -932,6 +933,7 @@ export function FinancialDashboard(props: any) {
 
   const cerrarModalPrestamo = () => {
     setModalPrestamoOpen(false);
+    setPrestamoMetodo("Divisas");
     setPrestamoCliente("");
     setPrestamoMonto("");
     setPrestamoACobrar("");
@@ -941,14 +943,21 @@ export function FinancialDashboard(props: any) {
 
   const elegirPrestamo = () => {
     setModalDeudaOpen(false);
+    setPrestamoMetodo("Divisas");
     setPrestamoACobrar("");
     setPrestamoFecha("");
     setModalPrestamoOpen(true);
   };
 
+  // Montos tal como se escriben, en la moneda elegida ($ para Divisas, BS para Efectivo o Pago móvil)
   const prestamoMontoNum = parseFloat(prestamoMonto) || 0;
   const prestamoACobrarNum = parseFloat(prestamoACobrar) || 0;
-  const prestamoGananciaNum = prestamoACobrarNum - prestamoMontoNum;
+  // Equivalente en $ para guardarlo igual que el resto del sistema (montoPendiente siempre en $)
+  const prestamoMontoDolares = aDolares(prestamoMetodo, prestamoMontoNum);
+  const prestamoACobrarDolares = aDolares(prestamoMetodo, prestamoACobrarNum);
+  const prestamoGananciaNum = prestamoACobrarDolares - prestamoMontoDolares;
+  const prestamoEsBs = prestamoMetodo !== "Divisas";
+  const prestamoUnidad = prestamoEsBs ? "BS" : "$";
 
   const validarPrestamo = (): string | null => {
     if (!prestamoCliente.trim()) return "Escribe el nombre del cliente.";
@@ -972,21 +981,24 @@ export function FinancialDashboard(props: any) {
           id: "prestamo",
           nombre: "Préstamo de dinero",
           qty: 1,
-          pVenta: redondear(prestamoACobrarNum),
-          pFinalBs: redondear(prestamoACobrarNum * tasaBcvSegura)
+          pVenta: redondear(prestamoACobrarDolares),
+          pFinalBs: redondear(prestamoACobrarDolares * tasaBcvSegura)
         }],
-        totalDolares: redondear(prestamoACobrarNum),
-        totalBs: redondear(prestamoACobrarNum * tasaBcvSegura),
+        totalDolares: redondear(prestamoACobrarDolares),
+        totalBs: redondear(prestamoACobrarDolares * tasaBcvSegura),
         metodoPago: "Pendiente",
         referencia: "",
         pagos: [],
         pendiente: true,
         cliente: prestamoCliente.trim(),
         concepto: prestamoNota.trim(),
-        montoPendiente: redondear(prestamoACobrarNum),
+        montoPendiente: redondear(prestamoACobrarDolares),
         prestamo: {
-          montoPrestado: redondear(prestamoMontoNum),
-          montoACobrar: redondear(prestamoACobrarNum),
+          moneda: prestamoMetodo,
+          montoPrestadoNativo: redondear(prestamoMontoNum),
+          montoACobrarNativo: redondear(prestamoACobrarNum),
+          montoPrestado: redondear(prestamoMontoDolares),
+          montoACobrar: redondear(prestamoACobrarDolares),
           ganancia: redondear(prestamoGananciaNum),
           fechaLimite: prestamoFecha
         }
@@ -2687,7 +2699,10 @@ export function FinancialDashboard(props: any) {
                           <p className="text-xs text-gray-400">{new Date(sale.fecha).toLocaleString()} (ID: {sale.id.slice(0, 8)})</p>
                           {sale.tipo === "prestamo" ? (
                             <p className="text-[11px] text-gray-500 mt-1">
-                              Prestado: ${(sale.prestamo?.montoPrestado || 0).toFixed(2)} · Vence: {sale.prestamo?.fechaLimite || "—"}
+                              Prestado: {sale.prestamo?.moneda === "Divisas"
+                                ? `$${(sale.prestamo?.montoPrestadoNativo ?? sale.prestamo?.montoPrestado ?? 0).toFixed(2)}`
+                                : `${fmtBs(sale.prestamo?.montoPrestadoNativo || 0)} BS (${sale.prestamo?.moneda || ""})`}
+                              {" · Vence: "}{sale.prestamo?.fechaLimite || "—"}
                             </p>
                           ) : (
                             <p className="text-[11px] text-gray-500 mt-1">{sale.items.map((i: any) => `${i.qty}x ${i.nombre}`).join(", ")}</p>
@@ -3116,9 +3131,28 @@ export function FinancialDashboard(props: any) {
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">¿En qué le prestas?</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {["Divisas", "Efectivo", "Pago movil"].map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setPrestamoMetodo(m)}
+                      className={cn(
+                        "py-2 px-2 text-xs font-bold rounded-xl border transition text-center cursor-pointer",
+                        prestamoMetodo === m ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+                      )}
+                    >
+                      {m === "Divisas" ? "Divisas ($)" : m === "Efectivo" ? "Efectivo (BS)" : "Pago móvil (BS)"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">¿Cuánto le prestas? ($)</label>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">¿Cuánto le prestas? ({prestamoUnidad})</label>
                   <input
                     type="number"
                     step="0.01"
@@ -3134,7 +3168,7 @@ export function FinancialDashboard(props: any) {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">¿Cuánto le vas a cobrar? ($)</label>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">¿Cuánto le vas a cobrar? ({prestamoUnidad})</label>
                   <input
                     type="number"
                     step="0.01"
@@ -3148,9 +3182,16 @@ export function FinancialDashboard(props: any) {
               </div>
 
               {prestamoMontoNum > 0 && prestamoACobrarNum > 0 && (
-                <div className="flex justify-between items-center text-xs font-bold bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
-                  <span className="text-blue-900">Ganancia por el préstamo:</span>
-                  <span className="text-blue-900">${prestamoGananciaNum.toFixed(2)} ({fmtBs(prestamoGananciaNum * tasaBcvSegura)} BS)</span>
+                <div className="space-y-1 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
+                  <div className="flex justify-between items-center text-xs font-bold text-blue-900">
+                    <span>Ganancia por el préstamo:</span>
+                    <span>${prestamoGananciaNum.toFixed(2)} ({fmtBs(prestamoGananciaNum * tasaBcvSegura)} BS)</span>
+                  </div>
+                  {prestamoEsBs && (
+                    <p className="text-[11px] text-blue-800">
+                      Equivale a ${prestamoMontoDolares.toFixed(2)} prestados y ${prestamoACobrarDolares.toFixed(2)} a cobrar, a la tasa BCV actual ({fmtBs(tasaBcvSegura)}).
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -3230,8 +3271,18 @@ export function FinancialDashboard(props: any) {
                 <div className="space-y-1 bg-blue-50 border border-blue-100 rounded-xl p-3">
                   <div className="flex justify-between items-center text-xs">
                     <span className="font-bold text-blue-900 uppercase">Monto prestado</span>
-                    <span className="font-bold text-blue-900">${(ventaPendienteActual.prestamo?.montoPrestado || 0).toFixed(2)}</span>
+                    <span className="font-bold text-blue-900">
+                      {ventaPendienteActual.prestamo?.moneda === "Divisas"
+                        ? `$${(ventaPendienteActual.prestamo?.montoPrestadoNativo ?? ventaPendienteActual.prestamo?.montoPrestado ?? 0).toFixed(2)}`
+                        : `${fmtBs(ventaPendienteActual.prestamo?.montoPrestadoNativo || 0)} BS`}
+                    </span>
                   </div>
+                  {ventaPendienteActual.prestamo?.moneda && ventaPendienteActual.prestamo.moneda !== "Divisas" && (
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="font-bold text-blue-900 uppercase">Vía</span>
+                      <span className="font-bold text-blue-900">{ventaPendienteActual.prestamo.moneda}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between items-center text-xs">
                     <span className="font-bold text-blue-900 uppercase">Ganancia esperada</span>
                     <span className="font-bold text-blue-900">${(ventaPendienteActual.prestamo?.ganancia || 0).toFixed(2)}</span>
