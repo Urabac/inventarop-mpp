@@ -299,6 +299,12 @@ export function FinancialDashboard(props: any) {
 
   // Intercambio interno (cambio de divisas / bolívares en caja)
   const [intercambios, setIntercambios] = useState<any[]>([]);
+  // Caja: saldo acumulado por método, se actualiza solo con cada venta, abono, devolución, intercambio o gasto
+  const [caja, setCaja] = useState<{ efectivo: number; divisas: number; pagoMovil: number; transferencia: number } | null>(null);
+  const [modalCajaOpen, setModalCajaOpen] = useState(false);
+  // Valores iniciales de caja que diste: se precargan en el formulario la primera vez, antes de que exista el documento en Firestore
+  const [cajaForm, setCajaForm] = useState({ efectivo: "87300", divisas: "1312", pagoMovil: "70238.65", transferencia: "0" });
+  const [guardandoCaja, setGuardandoCaja] = useState(false);
   const [filtroIntercambios, setFiltroIntercambios] = useState("dia");
   const [modalIntercambioOpen, setModalIntercambioOpen] = useState(false);
   const [intercambioEditId, setIntercambioEditId] = useState<string | null>(null);
@@ -505,6 +511,20 @@ export function FinancialDashboard(props: any) {
       }
     });
 
+    const unsubCaja = onSnapshot(doc(db, COLLECTION_CONFIG, "caja"), (docSnap) => {
+      if (docSnap.exists()) {
+        const d = docSnap.data();
+        setCaja({
+          efectivo: Number(d.efectivo) || 0,
+          divisas: Number(d.divisas) || 0,
+          pagoMovil: Number(d.pagoMovil) || 0,
+          transferencia: Number(d.transferencia) || 0
+        });
+      } else {
+        setCaja({ efectivo: 0, divisas: 0, pagoMovil: 0, transferencia: 0 });
+      }
+    });
+
     return () => {
       unsubProducts();
       unsubSales();
@@ -513,6 +533,7 @@ export function FinancialDashboard(props: any) {
       unsubGastos();
       unsubTasa();
       unsubDivisa();
+      unsubCaja();
     };
   }, [user]);
 
@@ -586,6 +607,56 @@ export function FinancialDashboard(props: any) {
   const aDolares = (metodo: string, monto: number) => (metodo === "Divisas" ? monto : monto / tasaBcvSegura);
   // Texto "$X (Y BS)" para mensajes
   const fmtDolaresYBs = (d: number) => `$${d.toFixed(2)} (${fmtBs(d * tasaBcvSegura)} BS)`;
+
+  // --- CAJA: saldo por método, se ajusta con increment() en cada movimiento de dinero ---
+  const campoCaja = (metodo: string): "efectivo" | "divisas" | "pagoMovil" | "transferencia" | null =>
+    metodo === "Efectivo" ? "efectivo"
+    : metodo === "Divisas" ? "divisas"
+    : metodo === "Pago movil" ? "pagoMovil"
+    : metodo === "Transferencia" ? "transferencia"
+    : null;
+
+  const sumarPorMetodo = (pagos: { metodo: string; monto: number }[]) => {
+    const r: Record<string, number> = {};
+    (pagos || []).forEach((p) => { r[p.metodo] = (r[p.metodo] || 0) + (p.monto || 0); });
+    return r;
+  };
+
+  const restarMapas = (a: Record<string, number>, b: Record<string, number>) => {
+    const r: Record<string, number> = { ...a };
+    Object.entries(b).forEach(([k, v]) => { r[k] = (r[k] || 0) - v; });
+    return r;
+  };
+
+  // Objeto listo para pasar a setDoc(..., {merge:true}) o batch.set(..., {merge:true})
+  const datosCaja = (deltas: Record<string, number>) => {
+    const data: any = {};
+    Object.entries(deltas).forEach(([metodo, monto]) => {
+      const campo = campoCaja(metodo);
+      if (campo && Math.abs(monto) > 0.004) data[campo] = increment(redondear(monto));
+    });
+    return data;
+  };
+
+  const refCaja = doc(db, COLLECTION_CONFIG, "caja");
+
+  const guardarCaja = async () => {
+    if (guardandoCaja) return;
+    setGuardandoCaja(true);
+    try {
+      await setDoc(refCaja, {
+        efectivo: redondear(parseFloat(cajaForm.efectivo) || 0),
+        divisas: redondear(parseFloat(cajaForm.divisas) || 0),
+        pagoMovil: redondear(parseFloat(cajaForm.pagoMovil) || 0),
+        transferencia: redondear(parseFloat(cajaForm.transferencia) || 0)
+      });
+      setModalCajaOpen(false);
+    } catch (e) {
+      console.error("Error al ajustar la caja:", e);
+    } finally {
+      setGuardandoCaja(false);
+    }
+  };
 
   // Arma la lista de pagos a partir de un formulario de métodos de pago.
   // "fijo" permite fijar el monto de un método (el que lleva vuelto) con lo que realmente se queda.
@@ -899,6 +970,8 @@ export function FinancialDashboard(props: any) {
         }
       });
       batch.set(doc(collection(db, COLLECTION_VENTAS)), nuevaVenta);
+      const deltaCajaVenta = datosCaja(sumarPorMetodo(pagos));
+      if (Object.keys(deltaCajaVenta).length > 0) batch.set(refCaja, deltaCajaVenta, { merge: true });
       await batch.commit();
 
       setCarrito([]);
@@ -1060,13 +1133,17 @@ export function FinancialDashboard(props: any) {
       const nuevoPendiente = Math.max(0, Number((venta.montoPendiente - abonoDolares).toFixed(2)));
       const completo = nuevoPendiente <= TOLERANCIA; // si el abono cubre todo, la venta queda completa
 
-      await updateDoc(doc(db, COLLECTION_VENTAS, venta.id), {
+      const batchAbono = writeBatch(db);
+      batchAbono.update(doc(db, COLLECTION_VENTAS, venta.id), {
         pagos,
         metodoPago: resumenMetodos(pagos),
         referencia: resumenReferencias(pagos),
         montoPendiente: completo ? 0 : nuevoPendiente,
         pendiente: !completo
       });
+      const deltaCajaAbono = datosCaja({ [abonoMetodo]: abonoMontoNum });
+      if (Object.keys(deltaCajaAbono).length > 0) batchAbono.set(refCaja, deltaCajaAbono, { merge: true });
+      await batchAbono.commit();
 
       setAbonoMonto("");
       setAbonoRef("");
@@ -1106,7 +1183,8 @@ export function FinancialDashboard(props: any) {
       const nuevos = armarPagos(pagoFinal, autoFinal, debeDolares, debeBs, "final", fecha);
       const pagos = [...(venta.pagos || []), ...nuevos];
 
-      await updateDoc(doc(db, COLLECTION_VENTAS, venta.id), {
+      const batchFinal = writeBatch(db);
+      batchFinal.update(doc(db, COLLECTION_VENTAS, venta.id), {
         pagos,
         metodoPago: resumenMetodos(pagos),
         referencia: resumenReferencias(pagos),
@@ -1114,6 +1192,9 @@ export function FinancialDashboard(props: any) {
         montoPendiente: 0,
         fechaFinalizado: fecha
       });
+      const deltaCajaFinal = datosCaja(sumarPorMetodo(nuevos));
+      if (Object.keys(deltaCajaFinal).length > 0) batchFinal.set(refCaja, deltaCajaFinal, { merge: true });
+      await batchFinal.commit();
       cerrarPendiente();
     } catch (e) {
       console.error("Error al finalizar pago:", e);
@@ -1388,6 +1469,10 @@ export function FinancialDashboard(props: any) {
         comision: comisionDevolucion || "Sin comisión"
       });
 
+      if (liquidaAhora && pagosLiqPrev.length > 0) {
+        const deltaCajaDev = datosCaja(sumarPorMetodo(pagos.slice(pagos.length - pagosLiqPrev.length)));
+        if (Object.keys(deltaCajaDev).length > 0) batch.set(refCaja, deltaCajaDev, { merge: true });
+      }
       await batch.commit();
       cerrarModalDevolucion();
     } catch (e: any) {
@@ -1598,6 +1683,11 @@ export function FinancialDashboard(props: any) {
         ediciones: [...(ventaEdit.ediciones || []), registroEdicion]
       });
 
+      if (liqAhoraEd) {
+        const signoEd = saldoEd < 0 ? -1 : 1;
+        const deltaCajaEd = datosCaja({ [editMetodoLiq]: signoEd * liqMontoEd });
+        if (Object.keys(deltaCajaEd).length > 0) batch.set(refCaja, deltaCajaEd, { merge: true });
+      }
       await batch.commit();
       cerrarEditarVenta();
     } catch (e: any) {
@@ -1704,8 +1794,17 @@ export function FinancialDashboard(props: any) {
         entregados: entregadosPrev,
         nota: intercambioNota.trim()
       };
+      // Lo que entra a la caja menos lo que sale, con lo nuevo (y lo anterior si se está editando)
+      const netoNuevo = restarMapas(sumarPorMetodo(recibidosPrev), sumarPorMetodo(entregadosPrev));
+      const original = intercambioEditId ? intercambios.find((it: any) => it.id === intercambioEditId) : null;
+      const netoViejo = original
+        ? restarMapas(sumarPorMetodo(pagosIntercambio(original, "recibidos")), sumarPorMetodo(pagosIntercambio(original, "entregados")))
+        : {};
+      const deltaCajaInter = datosCaja(restarMapas(netoNuevo, netoViejo));
+
+      const batchInter = writeBatch(db);
       if (intercambioEditId) {
-        await updateDoc(doc(db, COLLECTION_INTERCAMBIOS, intercambioEditId), {
+        batchInter.update(doc(db, COLLECTION_INTERCAMBIOS, intercambioEditId), {
           ...datos,
           // Los intercambios anteriores guardaban un solo método: se reemplazan por las listas nuevas
           recibido: deleteField(),
@@ -1714,12 +1813,14 @@ export function FinancialDashboard(props: any) {
           fechaEdicion: new Date().toISOString()
         });
       } else {
-        await addDoc(collection(db, COLLECTION_INTERCAMBIOS), {
+        batchInter.set(doc(collection(db, COLLECTION_INTERCAMBIOS)), {
           fecha: new Date().toISOString(),
           ...datos,
           editado: false
         });
       }
+      if (Object.keys(deltaCajaInter).length > 0) batchInter.set(refCaja, deltaCajaInter, { merge: true });
+      await batchInter.commit();
       cerrarModalIntercambio();
     } catch (e) {
       console.error("Error al guardar el intercambio:", e);
@@ -1810,15 +1911,23 @@ export function FinancialDashboard(props: any) {
         totalDolares: redondear(sumaDolares(pagosGastoPrev)),
         nota: gastoNota.trim()
       };
+      // Un gasto resta de la caja; si se edita, solo se aplica la diferencia contra lo que ya estaba restado
+      const gastoNuevo = sumarPorMetodo(pagosGastoPrev);
+      const gastoViejo = original ? sumarPorMetodo(original.pagos || []) : {};
+      const deltaCajaGasto = datosCaja(restarMapas(gastoViejo, gastoNuevo)); // viejo - nuevo: si el gasto subió, resta más
+
+      const batchGasto = writeBatch(db);
       if (gastoEditId) {
-        await updateDoc(doc(db, COLLECTION_GASTOS, gastoEditId), {
+        batchGasto.update(doc(db, COLLECTION_GASTOS, gastoEditId), {
           ...datos,
           editado: true,
           fechaEdicion: new Date().toISOString()
         });
       } else {
-        await addDoc(collection(db, COLLECTION_GASTOS), { ...datos, editado: false });
+        batchGasto.set(doc(collection(db, COLLECTION_GASTOS)), { ...datos, editado: false });
       }
+      if (Object.keys(deltaCajaGasto).length > 0) batchGasto.set(refCaja, deltaCajaGasto, { merge: true });
+      await batchGasto.commit();
       cerrarModalGasto();
     } catch (e) {
       console.error("Error al guardar el gasto:", e);
@@ -1830,7 +1939,12 @@ export function FinancialDashboard(props: any) {
   const eliminarGasto = async (g: any) => {
     if (!window.confirm(`¿Eliminar el gasto "${g.concepto}"? Esta acción no se puede deshacer.`)) return;
     try {
-      await deleteDoc(doc(db, COLLECTION_GASTOS, g.id));
+      // Al borrar el gasto, ese dinero vuelve a la caja
+      const deltaCajaElim = datosCaja(sumarPorMetodo(g.pagos || []));
+      const batchElim = writeBatch(db);
+      batchElim.delete(doc(db, COLLECTION_GASTOS, g.id));
+      if (Object.keys(deltaCajaElim).length > 0) batchElim.set(refCaja, deltaCajaElim, { merge: true });
+      await batchElim.commit();
     } catch (e) {
       console.error("Error eliminando el gasto:", e);
     }
@@ -2458,6 +2572,47 @@ export function FinancialDashboard(props: any) {
               </div>
 
               <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider">Caja actual</h3>
+                  <button
+                    onClick={() => {
+                      setCajaForm({
+                        efectivo: caja ? String(caja.efectivo) : "",
+                        divisas: caja ? String(caja.divisas) : "",
+                        pagoMovil: caja ? String(caja.pagoMovil) : "",
+                        transferencia: caja ? String(caja.transferencia) : ""
+                      });
+                      setModalCajaOpen(true);
+                    }}
+                    className="text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Edit className="w-3.5 h-3.5" /> Ajustar caja
+                  </button>
+                </div>
+                <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Efectivo (BS)</p>
+                    <p className="text-2xl font-black text-gray-900 mt-1">{caja ? fmtBs(caja.efectivo) : "—"}</p>
+                  </div>
+                  <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Divisas ($)</p>
+                    <p className="text-2xl font-black text-gray-900 mt-1">{caja ? `$${caja.divisas.toFixed(2)}` : "—"}</p>
+                  </div>
+                  <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Pago móvil (BS)</p>
+                    <p className="text-2xl font-black text-gray-900 mt-1">{caja ? fmtBs(caja.pagoMovil) : "—"}</p>
+                  </div>
+                  <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Transferencia (BS)</p>
+                    <p className="text-2xl font-black text-gray-900 mt-1">{caja ? fmtBs(caja.transferencia) : "—"}</p>
+                  </div>
+                </section>
+                <p className="text-[11px] text-gray-400 mt-2">
+                  Se actualiza sola con cada venta, abono, devolución, intercambio o gasto. Usa "Ajustar caja" solo para la carga inicial o para corregir después de contar el efectivo físico.
+                </p>
+              </div>
+
+              <div>
                 <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4">Resumen general</h3>
                 <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                   <div 
@@ -3049,6 +3204,90 @@ export function FinancialDashboard(props: any) {
       </main>
 
       {/* MODAL: DETALLE DE PAGO PENDIENTE */}
+      {/* MODAL: AJUSTAR CAJA */}
+      {modalCajaOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-gray-100 space-y-5">
+            <div className="flex justify-between items-center">
+              <div>
+                <h3 className="text-xl font-black text-gray-900">Ajustar caja</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Fija el saldo exacto de cada método. Úsalo para la carga inicial o para corregir tras contar el efectivo.</p>
+              </div>
+              <button
+                onClick={() => setModalCajaOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Efectivo (BS)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={cajaForm.efectivo}
+                  onChange={(e) => setCajaForm((f) => ({ ...f, efectivo: e.target.value }))}
+                  placeholder="0.00"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Divisas ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={cajaForm.divisas}
+                  onChange={(e) => setCajaForm((f) => ({ ...f, divisas: e.target.value }))}
+                  placeholder="0.00"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Pago móvil (BS)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={cajaForm.pagoMovil}
+                  onChange={(e) => setCajaForm((f) => ({ ...f, pagoMovil: e.target.value }))}
+                  placeholder="0.00"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Transferencia (BS)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={cajaForm.transferencia}
+                  onChange={(e) => setCajaForm((f) => ({ ...f, transferencia: e.target.value }))}
+                  placeholder="0.00"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModalCajaOpen(false)}
+                  className="px-5 py-2.5 rounded-xl text-sm font-bold text-gray-600 hover:bg-gray-100 transition cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <Button
+                  onClick={guardarCaja}
+                  disabled={guardandoCaja}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-sm cursor-pointer"
+                >
+                  {guardandoCaja ? "Guardando..." : "Guardar"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: SELECCIONAR TIPO DE DEUDA */}
       {modalDeudaOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
