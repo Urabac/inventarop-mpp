@@ -135,6 +135,10 @@ function useFormularioPagos(inicial: string = "Efectivo") {
   const [metodos, setMetodos] = useState<string[]>([inicial]);
   const [montos, setMontos] = useState<Record<string, string>>({});
   const [refs, setRefs] = useState<Record<string, string>>({});
+  // Segundo Pago móvil opcional (para ventas con dos bancos/referencias distintos)
+  const [segundoPagoMovil, setSegundoPagoMovil] = useState(false);
+  const [montoPagoMovil2, setMontoPagoMovil2] = useState("");
+  const [refPagoMovil2, setRefPagoMovil2] = useState("");
 
   const toggleMetodo = (m: string) => {
     if (metodos.includes(m)) {
@@ -142,23 +146,65 @@ function useFormularioPagos(inicial: string = "Efectivo") {
       setMetodos(metodos.filter((x) => x !== m));
       setMontos((p) => { const n = { ...p }; delete n[m]; return n; });
       setRefs((p) => { const n = { ...p }; delete n[m]; return n; });
+      if (m === "Pago movil") {
+        setSegundoPagoMovil(false);
+        setMontoPagoMovil2("");
+        setRefPagoMovil2("");
+      }
     } else {
       setMetodos([...metodos, m]);
     }
   };
   const setMonto = (m: string, v: string) => setMontos((p) => ({ ...p, [m]: v }));
   const setRef = (m: string, v: string) => setRefs((p) => ({ ...p, [m]: v.replace(/\D/g, "").slice(0, 4) }));
-  const reset = () => { setMetodos([inicial]); setMontos({}); setRefs({}); };
+  const agregarSegundoPagoMovil = () => setSegundoPagoMovil(true);
+  const quitarSegundoPagoMovil = () => {
+    setSegundoPagoMovil(false);
+    setMontoPagoMovil2("");
+    setRefPagoMovil2("");
+  };
+  const setRef2 = (v: string) => setRefPagoMovil2(v.replace(/\D/g, "").slice(0, 4));
+  const reset = () => {
+    setMetodos([inicial]);
+    setMontos({});
+    setRefs({});
+    setSegundoPagoMovil(false);
+    setMontoPagoMovil2("");
+    setRefPagoMovil2("");
+  };
   // Borra solo los montos escritos (se conservan los métodos elegidos)
-  const resetMontos = () => setMontos({});
+  const resetMontos = () => {
+    setMontos({});
+    setMontoPagoMovil2("");
+  };
   // Carga métodos, montos y referencias (para editar un registro)
   const cargar = (ms: string[], mo: Record<string, string>, rf: Record<string, string>) => {
     setMetodos(ms.length > 0 ? ms : [inicial]);
     setMontos(mo);
     setRefs(rf);
+    setSegundoPagoMovil(false);
+    setMontoPagoMovil2("");
+    setRefPagoMovil2("");
   };
 
-  return { metodos, montos, refs, toggleMetodo, setMonto, setRef, reset, resetMontos, cargar };
+  return {
+    metodos,
+    montos,
+    refs,
+    segundoPagoMovil,
+    montoPagoMovil2,
+    refPagoMovil2,
+    toggleMetodo,
+    setMonto,
+    setRef,
+    agregarSegundoPagoMovil,
+    quitarSegundoPagoMovil,
+    setMontoPagoMovil2,
+    setRef2,
+    reset,
+    resetMontos,
+    cargar
+  };
 }
 type FormPagos = ReturnType<typeof useFormularioPagos>;
 
@@ -173,6 +219,7 @@ function SelectorPagos({
   titulo = "Método de pago",
   mostrarResumen = true,
   sugerirMonto = false,
+  permitirSegundoPagoMovil = false,
   etiquetaTotal = "Total a cubrir",
   etiquetaPorPagar = "Monto por pagar"
 }: {
@@ -186,10 +233,12 @@ function SelectorPagos({
   titulo?: string;
   mostrarResumen?: boolean;
   sugerirMonto?: boolean;
+  permitirSegundoPagoMovil?: boolean;
   etiquetaTotal?: string;
   etiquetaPorPagar?: string;
 }) {
   const porPagarDolares = Math.max(0, objetivoDolares - pagadoDolares);
+  const mostrarResumenCalculo = mostrarResumen && (form.metodos.length > 1 || (permitirSegundoPagoMovil && form.segundoPagoMovil));
   return (
     <div className="space-y-3">
       <div className="space-y-2">
@@ -215,42 +264,89 @@ function SelectorPagos({
 
       <div className="space-y-2">
         {form.metodos.map((m) => (
-          <div key={m} className="p-3 bg-white rounded-xl border border-gray-200 space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs font-bold text-gray-700">{m} {m === "Divisas" ? "($)" : "(BS)"}</span>
-              {auto ? (
-                <span className="text-sm font-black text-gray-900">
-                  {m === "Divisas" ? `$${objetivoDolares.toFixed(2)}` : `${fmtBs(objetivoBs)} BS`}
+          <React.Fragment key={m}>
+            <div className="p-3 bg-white rounded-xl border border-gray-200 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs font-bold text-gray-700">
+                  {m === "Pago movil" && permitirSegundoPagoMovil && form.segundoPagoMovil ? "Pago movil #1" : m} {m === "Divisas" ? "($)" : "(BS)"}
                 </span>
-              ) : ocultarMetodo === m ? (
-                <span className="text-xs text-gray-400">Se calcula con el monto recibido</span>
-              ) : (
+                {auto ? (
+                  <span className="text-sm font-black text-gray-900">
+                    {m === "Divisas" ? `$${objetivoDolares.toFixed(2)}` : `${fmtBs(objetivoBs)} BS`}
+                  </span>
+                ) : ocultarMetodo === m ? (
+                  <span className="text-xs text-gray-400">Se calcula con el monto recibido</span>
+                ) : (
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={form.montos[m] ?? ""}
+                    onChange={(e) => form.setMonto(m, e.target.value)}
+                    placeholder={sugerirMonto && form.metodos.length === 1 && !(permitirSegundoPagoMovil && form.segundoPagoMovil) ? (m === "Divisas" ? objetivoDolares : objetivoBs).toFixed(2) : "0.00"}
+                    className="w-36 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-bold text-right bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                )}
+              </div>
+              {necesitaReferencia(m) && (
                 <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={form.montos[m] ?? ""}
-                  onChange={(e) => form.setMonto(m, e.target.value)}
-                  placeholder={sugerirMonto && form.metodos.length === 1 ? (m === "Divisas" ? objetivoDolares : objetivoBs).toFixed(2) : "0.00"}
-                  className="w-36 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-bold text-right bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  type="text"
+                  maxLength={4}
+                  value={form.refs[m] ?? ""}
+                  onChange={(e) => form.setRef(m, e.target.value)}
+                  placeholder="Referencia: últimos 4 dígitos (Ej: 4829)"
+                  className="w-full px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               )}
+              {m === "Pago movil" && permitirSegundoPagoMovil && !form.segundoPagoMovil && (
+                <button
+                  type="button"
+                  onClick={form.agregarSegundoPagoMovil}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 hover:text-emerald-800 hover:underline pt-0.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Agregar otro Pago móvil
+                </button>
+              )}
             </div>
-            {necesitaReferencia(m) && (
-              <input
-                type="text"
-                maxLength={4}
-                value={form.refs[m] ?? ""}
-                onChange={(e) => form.setRef(m, e.target.value)}
-                placeholder="Referencia: últimos 4 dígitos (Ej: 4829)"
-                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
+
+            {m === "Pago movil" && permitirSegundoPagoMovil && form.segundoPagoMovil && (
+              <div className="p-3 bg-emerald-50/40 rounded-xl border border-emerald-200 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-emerald-900">Pago movil #2 (BS)</span>
+                    <button
+                      type="button"
+                      onClick={form.quitarSegundoPagoMovil}
+                      className="text-[11px] font-bold text-red-600 hover:underline cursor-pointer"
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={form.montoPagoMovil2}
+                    onChange={(e) => form.setMontoPagoMovil2(e.target.value)}
+                    placeholder="0.00"
+                    className="w-36 px-3 py-1.5 rounded-lg border border-emerald-200 text-sm font-bold text-right bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <input
+                  type="text"
+                  maxLength={4}
+                  value={form.refPagoMovil2}
+                  onChange={(e) => form.setRef2(e.target.value)}
+                  placeholder="Referencia #2: últimos 4 dígitos (Ej: 7314)"
+                  className="w-full px-3 py-1.5 rounded-lg border border-emerald-200 text-sm font-bold bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
             )}
-          </div>
+          </React.Fragment>
         ))}
       </div>
 
-      {mostrarResumen && form.metodos.length > 1 && (
+      {mostrarResumenCalculo && (
         <>
           <p className="text-[11px] text-gray-500">
             Anota cuánto paga con cada método. Efectivo, Pago móvil y Transferencia se anotan en BS; Divisas en $.
@@ -321,6 +417,8 @@ export function FinancialDashboard(props: any) {
   const [gastoConcepto, setGastoConcepto] = useState("");
   const [gastoFecha, setGastoFecha] = useState("");
   const [gastoNota, setGastoNota] = useState("");
+  const [gastoComision, setGastoComision] = useState("");
+  const [gastoComisionMetodo, setGastoComisionMetodo] = useState("Pago movil");
   const formGasto = useFormularioPagos();
   const [guardandoGasto, setGuardandoGasto] = useState(false);
 
@@ -661,7 +759,14 @@ export function FinancialDashboard(props: any) {
   // Arma la lista de pagos a partir de un formulario de métodos de pago.
   // "fijo" permite fijar el monto de un método (el que lleva vuelto) con lo que realmente se queda.
   const armarPagos = (
-    form: { metodos: string[]; montos: Record<string, string>; refs: Record<string, string> },
+    form: {
+      metodos: string[];
+      montos: Record<string, string>;
+      refs: Record<string, string>;
+      segundoPagoMovil?: boolean;
+      montoPagoMovil2?: string;
+      refPagoMovil2?: string;
+    },
     auto: boolean,
     objetivoDolares: number,
     objetivoBs: number,
@@ -692,6 +797,19 @@ export function FinancialDashboard(props: any) {
           montoDolares: Number(montoDolares.toFixed(2)),
           referencia: necesitaReferencia(m) ? (form.refs[m] || "") : ""
         });
+      }
+      if (m === "Pago movil" && form.segundoPagoMovil) {
+        const monto2 = parseFloat(form.montoPagoMovil2 || "") || 0;
+        if (monto2 > 0) {
+          lista.push({
+            fecha,
+            tipo,
+            metodo: "Pago movil",
+            monto: Number(monto2.toFixed(2)),
+            montoDolares: Number(aDolares("Pago movil", monto2).toFixed(2)),
+            referencia: form.refPagoMovil2 || ""
+          });
+        }
       }
     });
     return lista;
@@ -808,7 +926,7 @@ export function FinancialDashboard(props: any) {
   };
 
   // --- CÁLCULOS DE PAGO DE LA NUEVA VENTA ---
-  const autoCompleto = pagoVenta.metodos.length === 1 && !esPagoPendiente;
+  const autoCompleto = pagoVenta.metodos.length === 1 && !pagoVenta.segundoPagoMovil && !esPagoPendiente;
 
   // El vuelto se puede dar cuando se paga con Divisas ($) o con Efectivo (BS)
   const metodosVuelto: string[] = pagoVenta.metodos.filter((m) => m === "Divisas" || m === "Efectivo");
@@ -849,21 +967,33 @@ export function FinancialDashboard(props: any) {
   // Con vuelto mixto cada método queda con su monto neto: lo recibido menos el vuelto que salió de esa caja.
   // Ej: recibes $20 y das $5 + 850 BS -> Divisas +$15 y Efectivo -850 BS (el vuelto en BS sale de la caja de efectivo).
   const armarPagosMixto = (fecha: string) => {
+    const lista: any[] = [];
+    // Conserva pagos con referencia (ej. dos Pago móvil separados con su propia referencia)
+    pagosOtros
+      .filter((p) => necesitaReferencia(p.metodo))
+      .forEach((p) => {
+        lista.push({ ...p, fecha, tipo: "venta" });
+      });
     const neto: Record<string, number> = {};
-    pagosOtros.forEach((p) => { neto[p.metodo] = (neto[p.metodo] || 0) + p.monto; });
+    pagosOtros
+      .filter((p) => !necesitaReferencia(p.metodo))
+      .forEach((p) => { neto[p.metodo] = (neto[p.metodo] || 0) + p.monto; });
     neto[metodoVueltoSel] = (neto[metodoVueltoSel] || 0) + recibidoNum;
     neto["Divisas"] = (neto["Divisas"] || 0) - mixDivisaNum;
     neto["Efectivo"] = (neto["Efectivo"] || 0) - mixBsNum;
-    return Object.entries(neto)
+    Object.entries(neto)
       .filter(([, monto]) => Math.abs(monto) > 0.004)
-      .map(([m, monto]) => ({
-        fecha,
-        tipo: monto < 0 ? "vuelto" : "venta",
-        metodo: m,
-        monto: redondear(monto),
-        montoDolares: redondear(aDolares(m, monto)),
-        referencia: necesitaReferencia(m) ? (pagoVenta.refs[m] || "") : ""
-      }));
+      .forEach(([m, monto]) => {
+        lista.push({
+          fecha,
+          tipo: monto < 0 ? "vuelto" : "venta",
+          metodo: m,
+          monto: redondear(monto),
+          montoDolares: redondear(aDolares(m, monto)),
+          referencia: ""
+        });
+      });
+    return lista;
   };
 
   const pagosVentaPreview = vueltoMixtoActivo
@@ -1856,6 +1986,23 @@ export function FinancialDashboard(props: any) {
       })
       .filter((p) => p.monto > 0);
   const pagosGastoPrev = armarPagosGasto(formGasto);
+  const comisionGastoBs = redondear(Math.max(0, parseFloat(gastoComision) || 0));
+  const comisionGastoDolares = redondear(comisionGastoBs / tasaBcvSegura);
+  const metodosBsGasto = formGasto.metodos.filter((m) => m !== "Divisas");
+  const metodoComisionActivo = metodosBsGasto.includes(gastoComisionMetodo)
+    ? gastoComisionMetodo
+    : (metodosBsGasto[0] || "Pago movil");
+  const totalGastoConComisionDolares = redondear(sumaDolares(pagosGastoPrev) + comisionGastoDolares);
+
+  // Mapa de salidas de caja de un gasto (pagos + comisión en BS si existe)
+  const salidasCajaDeGasto = (pagos: any[], comisionBs: number, comisionMetodo: string) => {
+    const r = sumarPorMetodo(pagos || []);
+    if ((comisionBs || 0) > 0) {
+      const m = comisionMetodo && comisionMetodo !== "Divisas" ? comisionMetodo : "Pago movil";
+      r[m] = (r[m] || 0) + comisionBs;
+    }
+    return r;
+  };
 
   const validarGasto = (): string | null => {
     if (!gastoConcepto.trim()) return "Escribe qué gastaste.";
@@ -1871,6 +2018,8 @@ export function FinancialDashboard(props: any) {
     setGastoConcepto("");
     setGastoFecha(fechaLocalTexto(new Date()));
     setGastoNota("");
+    setGastoComision("");
+    setGastoComisionMetodo("Pago movil");
     formGasto.reset();
     setModalGastoOpen(true);
   };
@@ -1880,6 +2029,8 @@ export function FinancialDashboard(props: any) {
     setGastoConcepto(g.concepto || "");
     setGastoFecha(fechaLocalTexto(new Date(g.fecha)));
     setGastoNota(g.nota || "");
+    setGastoComision(g.comisionBs ? String(g.comisionBs) : "");
+    setGastoComisionMetodo(g.comisionMetodo || "Pago movil");
     cargarLadoEnForm(formGasto, g.pagos || []);
     setModalGastoOpen(true);
   };
@@ -1890,6 +2041,8 @@ export function FinancialDashboard(props: any) {
     setGastoConcepto("");
     setGastoFecha("");
     setGastoNota("");
+    setGastoComision("");
+    setGastoComisionMetodo("Pago movil");
     formGasto.reset();
   };
 
@@ -1908,12 +2061,17 @@ export function FinancialDashboard(props: any) {
         fecha: fechaIso,
         concepto: gastoConcepto.trim(),
         pagos: pagosGastoPrev,
-        totalDolares: redondear(sumaDolares(pagosGastoPrev)),
+        comisionBs: comisionGastoBs,
+        comisionDolares: comisionGastoDolares,
+        comisionMetodo: comisionGastoBs > 0 ? metodoComisionActivo : "",
+        totalDolares: totalGastoConComisionDolares,
         nota: gastoNota.trim()
       };
-      // Un gasto resta de la caja; si se edita, solo se aplica la diferencia contra lo que ya estaba restado
-      const gastoNuevo = sumarPorMetodo(pagosGastoPrev);
-      const gastoViejo = original ? sumarPorMetodo(original.pagos || []) : {};
+      // Un gasto (y su comisión) resta de la caja; si se edita, solo se aplica la diferencia contra lo que ya estaba restado
+      const gastoNuevo = salidasCajaDeGasto(pagosGastoPrev, comisionGastoBs, metodoComisionActivo);
+      const gastoViejo = original
+        ? salidasCajaDeGasto(original.pagos || [], original.comisionBs || 0, original.comisionMetodo || "Pago movil")
+        : {};
       const deltaCajaGasto = datosCaja(restarMapas(gastoViejo, gastoNuevo)); // viejo - nuevo: si el gasto subió, resta más
 
       const batchGasto = writeBatch(db);
@@ -1939,8 +2097,8 @@ export function FinancialDashboard(props: any) {
   const eliminarGasto = async (g: any) => {
     if (!window.confirm(`¿Eliminar el gasto "${g.concepto}"? Esta acción no se puede deshacer.`)) return;
     try {
-      // Al borrar el gasto, ese dinero vuelve a la caja
-      const deltaCajaElim = datosCaja(sumarPorMetodo(g.pagos || []));
+      // Al borrar el gasto, ese dinero (incluyendo su comisión) vuelve a la caja
+      const deltaCajaElim = datosCaja(salidasCajaDeGasto(g.pagos || [], g.comisionBs || 0, g.comisionMetodo || "Pago movil"));
       const batchElim = writeBatch(db);
       batchElim.delete(doc(db, COLLECTION_GASTOS, g.id));
       if (Object.keys(deltaCajaElim).length > 0) batchElim.set(refCaja, deltaCajaElim, { merge: true });
@@ -1953,11 +2111,15 @@ export function FinancialDashboard(props: any) {
   const gastosFiltrados = gastos.filter((g: any) => enPeriodo(g.fecha, filtroGastos));
   const totalGastosFiltradosDolares = gastosFiltrados.reduce((a: number, g: any) => a + (g.totalDolares || 0), 0);
   const gastosFiltradosPorMetodo: Record<string, number> = {};
-  gastosFiltrados.forEach((g: any) =>
+  gastosFiltrados.forEach((g: any) => {
     (g.pagos || []).forEach((p: any) => {
       gastosFiltradosPorMetodo[p.metodo] = (gastosFiltradosPorMetodo[p.metodo] || 0) + p.monto;
-    })
-  );
+    });
+    if ((g.comisionBs || 0) > 0) {
+      const mCom = g.comisionMetodo || "Pago movil";
+      gastosFiltradosPorMetodo[mCom] = (gastosFiltradosPorMetodo[mCom] || 0) + g.comisionBs;
+    }
+  });
 
   // Filtro propio de la lista de intercambios (el reporte usa el filtro de Ventas)
   const intercambiosFiltrados = intercambios.filter((it: any) => {
@@ -2014,9 +2176,12 @@ export function FinancialDashboard(props: any) {
       pagosIntercambio(it, "entregados").forEach((p: any) => moverCaja(p.metodo, -p.monto));
     });
 
-    // Gastos del periodo: salen de la caja
+    // Gastos del periodo: salen de la caja (incluyendo la comisión en BS si tiene)
     const gastosPeriodo = gastos.filter((g: any) => dentroDelFiltro(g.fecha));
-    gastosPeriodo.forEach((g: any) => (g.pagos || []).forEach((p: any) => moverCaja(p.metodo, -p.monto)));
+    gastosPeriodo.forEach((g: any) => {
+      (g.pagos || []).forEach((p: any) => moverCaja(p.metodo, -p.monto));
+      if ((g.comisionBs || 0) > 0) moverCaja(g.comisionMetodo || "Pago movil", -g.comisionBs);
+    });
     const totalGastosDolar = gastosPeriodo.reduce((a: number, g: any) => a + (g.totalDolares || 0), 0);
     const tituloCajaNeta =
       "Movimiento neto de caja por método (ventas" +
@@ -2234,7 +2399,7 @@ export function FinancialDashboard(props: any) {
                   <tr>
                     <td>${new Date(g.fecha).toLocaleDateString()}</td>
                     <td>${escapeHtml(g.concepto)}${g.nota ? `<br><em>${escapeHtml(g.nota)}</em>` : ""}</td>
-                    <td>${escapeHtml(textoPagosLista(g.pagos || []))}</td>
+                    <td>${escapeHtml(textoPagosLista(g.pagos || []))}${(g.comisionBs || 0) > 0 ? `<br><span style="font-size:11px;color:#be123c;">+ Comisión: ${fmtBs(g.comisionBs)} BS (${escapeHtml(g.comisionMetodo || "Pago movil")})</span>` : ""}</td>
                     <td class="num">$${(g.totalDolares || 0).toFixed(2)}</td>
                   </tr>
                 `).join("")}
@@ -3083,6 +3248,11 @@ export function FinancialDashboard(props: any) {
                         <p className="text-sm text-gray-800">
                           <strong>Pagado con:</strong> {textoPagosLista(g.pagos || [])}
                         </p>
+                        {(g.comisionBs || 0) > 0 && (
+                          <p className="text-xs font-bold text-rose-600">
+                            Comisión: {fmtBs(g.comisionBs)} BS ({g.comisionMetodo || "Pago movil"} · ${(g.comisionDolares || 0).toFixed(2)} equiv.)
+                          </p>
+                        )}
                         {g.nota && <p className="text-xs text-gray-500">Nota: {g.nota}</p>}
                       </div>
                       <div className="flex items-center gap-2">
@@ -3753,11 +3923,53 @@ export function FinancialDashboard(props: any) {
               />
             </div>
 
-            <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200">
+            <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-3">
               <SelectorPagos form={formGasto} auto={false} objetivoDolares={0} objetivoBs={0} mostrarResumen={false} titulo="Pagado con" />
-              {pagosGastoPrev.length > 0 && (
-                <p className="text-[11px] text-gray-500 mt-2">
-                  Total equivalente: <strong>${sumaDolares(pagosGastoPrev).toFixed(2)}</strong> (los Bs se convierten con la tasa BCV actual)
+
+              <div className="pt-3 border-t border-gray-200 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 uppercase">Comisión (BS) <span className="normal-case font-medium text-gray-400">(opcional)</span></label>
+                    <p className="text-[11px] text-gray-400">Se suma al gasto y se descuenta de la caja</p>
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={gastoComision}
+                    onChange={(e) => setGastoComision(e.target.value)}
+                    placeholder="0.00"
+                    className="w-36 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-bold text-right bg-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+                  />
+                </div>
+                {comisionGastoBs > 0 && metodosBsGasto.length > 1 && (
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <span className="text-[11px] font-bold text-gray-500">Descontar comisión de:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {metodosBsGasto.map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setGastoComisionMetodo(m)}
+                          className={cn(
+                            "px-2.5 py-1 text-[11px] font-bold rounded-lg border transition cursor-pointer",
+                            metodoComisionActivo === m
+                              ? "bg-rose-600 text-white border-rose-600"
+                              : "bg-white text-gray-700 border-gray-200 hover:bg-gray-100"
+                          )}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {(pagosGastoPrev.length > 0 || comisionGastoBs > 0) && (
+                <p className="text-[11px] text-gray-600 pt-1">
+                  Total gasto equivalente: <strong className="text-rose-700">${totalGastoConComisionDolares.toFixed(2)}</strong>
+                  {comisionGastoBs > 0 ? ` (incluye ${fmtBs(comisionGastoBs)} BS / $${comisionGastoDolares.toFixed(2)} de comisión en ${metodoComisionActivo})` : " (los Bs se convierten con la tasa BCV actual)"}
                 </p>
               )}
             </div>
@@ -4715,6 +4927,7 @@ export function FinancialDashboard(props: any) {
                   pagadoDolares={pagadoVentaDolares}
                   tasa={tasaBcvSegura}
                   ocultarMetodo={vueltoActivo ? metodoVueltoSel : null}
+                  permitirSegundoPagoMovil={true}
                 />
 
                 {vueltoActivo && (
