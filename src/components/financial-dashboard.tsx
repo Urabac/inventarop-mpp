@@ -21,7 +21,8 @@ import {
   ShieldCheck,
   RotateCcw,
   Clock,
-  Coins
+  Coins,
+  FileText
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -51,6 +52,7 @@ const COLLECTION_DEVOLUCIONES = "motopartes_pirueta_devoluciones";
 const COLLECTION_INTERCAMBIOS = "motopartes_pirueta_intercambios";
 const COLLECTION_GASTOS = "motopartes_pirueta_gastos";
 const COLLECTION_CONFIG = "motopartes_pirueta_configuracion";
+const COLLECTION_AUDITORIA = "motopartes_pirueta_auditoria";
 
 // --- CONSTANTES Y UTILIDADES ---
 const METODOS_PAGO = ["Efectivo", "Divisas", "Pago movil", "Transferencia"];
@@ -476,7 +478,14 @@ export function FinancialDashboard(props: any) {
   const [vueltoMixto, setVueltoMixto] = useState(false);
   const [vueltoMixtoD, setVueltoMixtoD] = useState("");
   const [vueltoMixtoBs, setVueltoMixtoBs] = useState("");
-  const [filtroVentas, setFiltroVentas] = useState("dia");
+  const [filtroVentas, setFiltroVentas] = useState<"dia" | "semana" | "mes" | "anual">("dia");
+  const [mesReporte, setMesReporte] = useState<number>(() => new Date().getMonth());
+  const [anioReporte, setAnioReporte] = useState<number>(() => new Date().getFullYear());
+  const [auditoria, setAuditoria] = useState<any[]>([]);
+  const [editPagoIdx, setEditPagoIdx] = useState<number | null>(null);
+  const [editPagoMetodo, setEditPagoMetodo] = useState("Efectivo");
+  const [editPagoMonto, setEditPagoMonto] = useState("");
+  const [editPagoRef, setEditPagoRef] = useState("");
 
   // Estados para Crear deuda (selector y formulario de préstamo)
   const [modalDeudaOpen, setModalDeudaOpen] = useState(false);
@@ -593,6 +602,12 @@ export function FinancialDashboard(props: any) {
       setGastos(lista);
     });
 
+    const unsubAuditoria = onSnapshot(collection(db, COLLECTION_AUDITORIA), (snapshot) => {
+      const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      lista.sort((a: any, b: any) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+      setAuditoria(lista);
+    });
+
     const unsubTasa = onSnapshot(doc(db, COLLECTION_CONFIG, "bcv"), (docSnap) => {
       if (docSnap.exists()) {
         const val = docSnap.data().valor;
@@ -629,11 +644,32 @@ export function FinancialDashboard(props: any) {
       unsubDev();
       unsubInter();
       unsubGastos();
+      unsubAuditoria();
       unsubTasa();
       unsubDivisa();
       unsubCaja();
     };
   }, [user]);
+
+  const registrarAuditoria = async (
+    accion: "Editado" | "Eliminado",
+    modulo: "Ventas" | "Pagos pendientes" | "Intercambio interno" | "Gastos" | "Inventario" | "Caja",
+    resumen: string,
+    detalle: string = ""
+  ) => {
+    try {
+      await addDoc(collection(db, COLLECTION_AUDITORIA), {
+        fecha: new Date().toISOString(),
+        usuario: user?.email || "Administrador",
+        accion,
+        modulo,
+        resumen,
+        detalle
+      });
+    } catch (e) {
+      console.error("Error registrando auditoría:", e);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -850,7 +886,17 @@ export function FinancialDashboard(props: any) {
 
     try {
       if (editandoId) {
+        const prodAntes = products.find((p) => p.id === editandoId);
         await updateDoc(doc(db, COLLECTION_INVENTARIO, editandoId), datosProd);
+        await registrarAuditoria(
+          "Editado",
+          "Inventario",
+          `Producto editado: ${datosProd.nombre} (${datosProd.codigo})`,
+          prodAntes
+            ? `Antes: ${prodAntes.nombre} (${prodAntes.codigo}) · Stock: ${prodAntes.cantidad} · Costo: $${prodAntes.pCompra}
+Después: ${datosProd.nombre} (${datosProd.codigo}) · Stock: ${datosProd.cantidad} · Costo: $${datosProd.pCompra}`
+            : `Stock: ${datosProd.cantidad} · Costo: $${datosProd.pCompra}`
+        );
       } else {
         await addDoc(collection(db, COLLECTION_INVENTARIO), datosProd);
       }
@@ -863,9 +909,16 @@ export function FinancialDashboard(props: any) {
   };
 
   const eliminarProducto = async (id: string, nombre?: string) => {
+    const prod = products.find((p) => p.id === id);
     if (!window.confirm(`¿Eliminar "${nombre || "este producto"}" del inventario? Esta acción no se puede deshacer.`)) return;
     try {
       await deleteDoc(doc(db, COLLECTION_INVENTARIO, id));
+      await registrarAuditoria(
+        "Eliminado",
+        "Inventario",
+        `Producto eliminado: ${prod?.nombre || nombre || id}${prod?.codigo ? ` (${prod.codigo})` : ""}`,
+        prod ? `Stock al eliminar: ${prod.cantidad} · Costo: $${prod.pCompra}` : ""
+      );
     } catch (e: any) {
       console.error("Error eliminando:", e);
     }
@@ -1231,7 +1284,129 @@ export function FinancialDashboard(props: any) {
     setAbonoMetodo("Efectivo");
     setAbonoMonto("");
     setAbonoRef("");
+    setEditPagoIdx(null);
+    setEditPagoMetodo("Efectivo");
+    setEditPagoMonto("");
+    setEditPagoRef("");
     pagoFinal.reset();
+  };
+
+  const abrirEditarPagoPendiente = (idx: number, pago: any) => {
+    setEditPagoIdx(idx);
+    setEditPagoMetodo(pago.metodo || "Efectivo");
+    setEditPagoMonto(String(Math.abs(Number(pago.monto) || 0)));
+    setEditPagoRef(pago.referencia || "");
+  };
+
+  const guardarEdicionPagoPendiente = async () => {
+    const venta = ventaPendienteActual;
+    if (!venta || editPagoIdx === null || guardandoPendiente) return;
+    const pagosActuales = [...(venta.pagos || [])];
+    const pagoAnterior = pagosActuales[editPagoIdx];
+    if (!pagoAnterior) return;
+
+    const nuevoMonto = parseFloat(editPagoMonto) || 0;
+    if (nuevoMonto <= 0) {
+      alert("Ingresa un monto válido mayor a 0.");
+      return;
+    }
+    if (necesitaReferencia(editPagoMetodo) && editPagoRef.length !== 4) {
+      alert("Ingresa los 4 últimos dígitos de la referencia.");
+      return;
+    }
+
+    const signo = (Number(pagoAnterior.monto) || 0) < 0 ? -1 : 1;
+    const nuevoMontoConSigno = signo * redondear(nuevoMonto);
+    const nuevoDolaresConSigno = signo * redondear(aDolares(editPagoMetodo, nuevoMonto));
+
+    const pagoActualizado = {
+      ...pagoAnterior,
+      metodo: editPagoMetodo,
+      monto: nuevoMontoConSigno,
+      montoDolares: nuevoDolaresConSigno,
+      referencia: necesitaReferencia(editPagoMetodo) ? editPagoRef : "",
+      editado: true,
+      fechaEdicion: new Date().toISOString()
+    };
+
+    const nuevosPagos = pagosActuales.map((p: any, i: number) => (i === editPagoIdx ? pagoActualizado : p));
+    const totalPagadoDolares = sumaDolares(nuevosPagos);
+    const nuevoPendiente = Math.max(0, redondear((venta.totalDolares || 0) - totalPagadoDolares));
+    const siguePendiente = nuevoPendiente > TOLERANCIA;
+
+    setGuardandoPendiente(true);
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, COLLECTION_VENTAS, venta.id), {
+        pagos: nuevosPagos,
+        metodoPago: resumenMetodos(nuevosPagos) || "Pendiente",
+        referencia: resumenReferencias(nuevosPagos),
+        montoPendiente: siguePendiente ? nuevoPendiente : 0,
+        pendiente: siguePendiente
+      });
+      const deltaCaja = datosCaja(restarMapas(sumarPorMetodo([pagoActualizado]), sumarPorMetodo([pagoAnterior])));
+      if (Object.keys(deltaCaja).length > 0) batch.set(refCaja, deltaCaja, { merge: true });
+      await batch.commit();
+
+      await registrarAuditoria(
+        "Editado",
+        "Pagos pendientes",
+        `Pago editado en deuda de ${venta.cliente || "Cliente"} (ID: ${venta.id.slice(0, 8)})`,
+        `Antes: ${etiquetaTipoPago(pagoAnterior.tipo)} · ${pagoAnterior.metodo}: ${fmtPago(pagoAnterior)}
+Después: ${etiquetaTipoPago(pagoActualizado.tipo)} · ${pagoActualizado.metodo}: ${fmtPago(pagoActualizado)}`
+      );
+
+      setEditPagoIdx(null);
+      if (!siguePendiente) cerrarPendiente();
+    } catch (e) {
+      console.error("Error al editar el pago pendiente:", e);
+    } finally {
+      setGuardandoPendiente(false);
+    }
+  };
+
+  const eliminarPagoPendiente = async (idx: number) => {
+    const venta = ventaPendienteActual;
+    if (!venta || guardandoPendiente) return;
+    const pagosActuales = [...(venta.pagos || [])];
+    const pagoEliminado = pagosActuales[idx];
+    if (!pagoEliminado) return;
+
+    if (!window.confirm(`¿Eliminar este pago (${etiquetaTipoPago(pagoEliminado.tipo)} · ${pagoEliminado.metodo}: ${fmtPago(pagoEliminado)})? El saldo pendiente volverá a subir y se ajustará la caja.`)) return;
+
+    const nuevosPagos = pagosActuales.filter((_: any, i: number) => i !== idx);
+    const totalPagadoDolares = sumaDolares(nuevosPagos);
+    const nuevoPendiente = Math.max(0, redondear((venta.totalDolares || 0) - totalPagadoDolares));
+    const siguePendiente = nuevoPendiente > TOLERANCIA;
+
+    setGuardandoPendiente(true);
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, COLLECTION_VENTAS, venta.id), {
+        pagos: nuevosPagos,
+        metodoPago: resumenMetodos(nuevosPagos) || "Pendiente",
+        referencia: resumenReferencias(nuevosPagos),
+        montoPendiente: siguePendiente ? nuevoPendiente : 0,
+        pendiente: siguePendiente
+      });
+      // Revertir en caja el dinero que había ingresado con ese pago
+      const deltaCaja = datosCaja({ [pagoEliminado.metodo]: -(Number(pagoEliminado.monto) || 0) });
+      if (Object.keys(deltaCaja).length > 0) batch.set(refCaja, deltaCaja, { merge: true });
+      await batch.commit();
+
+      await registrarAuditoria(
+        "Eliminado",
+        "Pagos pendientes",
+        `Abono/pago eliminado en deuda de ${venta.cliente || "Cliente"} (ID: ${venta.id.slice(0, 8)})`,
+        `Pago eliminado: ${etiquetaTipoPago(pagoEliminado.tipo)} · ${pagoEliminado.metodo}: ${fmtPago(pagoEliminado)} · Nuevo saldo pendiente: $${nuevoPendiente.toFixed(2)}`
+      );
+
+      if (editPagoIdx === idx) setEditPagoIdx(null);
+    } catch (e) {
+      console.error("Error al eliminar el pago pendiente:", e);
+    } finally {
+      setGuardandoPendiente(false);
+    }
   };
 
   // Abono
@@ -1819,6 +1994,13 @@ export function FinancialDashboard(props: any) {
         if (Object.keys(deltaCajaEd).length > 0) batch.set(refCaja, deltaCajaEd, { merge: true });
       }
       await batch.commit();
+      await registrarAuditoria(
+        "Editado",
+        "Ventas",
+        `Venta editada (ID: ${ventaEdit.id.slice(0, 8)})${ventaEdit.cliente ? ` · Cliente: ${ventaEdit.cliente}` : ""}`,
+        `Total antes: $${ventaEdit.totalDolares.toFixed(2)} (${textoItems(ventaEdit.items)})
+Total después: $${calcEdit.totalD.toFixed(2)} (${textoItems(editItems)})`
+      );
       cerrarEditarVenta();
     } catch (e: any) {
       console.error("Error al editar la venta:", e);
@@ -1826,6 +2008,63 @@ export function FinancialDashboard(props: any) {
       setGuardandoEdicion(false);
     }
   };
+
+  const eliminarVenta = async (sale: any) => {
+    const esPrestamo = sale.tipo === "prestamo";
+    const titulo = esPrestamo
+      ? `el préstamo de ${sale.cliente || "Cliente"}`
+      : `la venta #${sale.id.slice(0, 8)} por $${(sale.totalDolares || 0).toFixed(2)}`;
+    if (!window.confirm(`¿Eliminar ${titulo}? Se devolverán los productos al inventario, se revertirán los movimientos de caja y quedará registrado en la bitácora de auditoría.`)) return;
+
+    try {
+      const batch = writeBatch(db);
+      // 1. Devolver stock al inventario si tiene productos
+      (sale.items || []).forEach((item: any) => {
+        if (item.id && products.some((p) => p.id === item.id)) {
+          batch.update(doc(db, COLLECTION_INVENTARIO, item.id), { cantidad: increment(item.qty || 0) });
+        }
+      });
+
+      // 2. Revertir en caja todos los pagos registrados en esta venta (o el monto prestado si fue préstamo)
+      const pagosVenta = obtenerPagosVenta(sale);
+      const movimientosCaja = sumarPorMetodo(pagosVenta);
+      if (esPrestamo && sale.prestamo?.moneda && sale.prestamo?.montoPrestadoNativo) {
+        // Si es un préstamo, al crearse salió el dinero prestado y entraron los abonos
+        movimientosCaja[sale.prestamo.moneda] = (movimientosCaja[sale.prestamo.moneda] || 0) - Number(sale.prestamo.montoPrestadoNativo);
+      }
+      const inversoCaja: Record<string, number> = {};
+      Object.entries(movimientosCaja).forEach(([metodo, monto]) => {
+        inversoCaja[metodo] = -monto;
+      });
+      const deltaCaja = datosCaja(inversoCaja);
+      if (Object.keys(deltaCaja).length > 0) batch.set(refCaja, deltaCaja, { merge: true });
+
+      // 3. Eliminar el documento
+      batch.delete(doc(db, COLLECTION_VENTAS, sale.id));
+      await batch.commit();
+
+      const detalleItems = (sale.items || []).map((i: any) => `${i.qty}x ${i.nombre}`).join(", ");
+      await registrarAuditoria(
+        "Eliminado",
+        esPrestamo ? "Pagos pendientes" : "Ventas",
+        esPrestamo
+          ? `Préstamo eliminado: ${sale.cliente || "Cliente"} (ID: ${sale.id.slice(0, 8)})`
+          : `Venta eliminada (ID: ${sale.id.slice(0, 8)}) · Total: $${(sale.totalDolares || 0).toFixed(2)}`,
+        `Fecha original: ${new Date(sale.fecha).toLocaleString()}${sale.cliente ? ` · Cliente: ${sale.cliente}` : ""}${detalleItems ? `
+Productos: ${detalleItems}` : ""}`
+      );
+
+      if (pendienteId === sale.id) cerrarPendiente();
+      if (editVentaId === sale.id) cerrarEditarVenta();
+    } catch (e) {
+      console.error("Error al eliminar la venta:", e);
+    }
+  };
+
+  const NOMBRES_MESES = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+  ];
 
   // --- FILTRO DE PERIODO (lista de ventas y reporte) ---
   const dentroDelFiltro = (fechaIso: string) => {
@@ -1838,7 +2077,9 @@ export function FinancialDashboard(props: any) {
       unaSemanaAtras.setDate(ahora.getDate() - 7);
       return f >= unaSemanaAtras;
     } else if (filtroVentas === "mes") {
-      return f.getMonth() === ahora.getMonth() && f.getFullYear() === ahora.getFullYear();
+      return f.getMonth() === mesReporte && f.getFullYear() === anioReporte;
+    } else if (filtroVentas === "anual") {
+      return f.getFullYear() === anioReporte;
     }
     return true;
   };
@@ -1951,11 +2192,47 @@ export function FinancialDashboard(props: any) {
       }
       if (Object.keys(deltaCajaInter).length > 0) batchInter.set(refCaja, deltaCajaInter, { merge: true });
       await batchInter.commit();
+      if (intercambioEditId && original) {
+        await registrarAuditoria(
+          "Editado",
+          "Intercambio interno",
+          `Intercambio editado (ID: ${intercambioEditId.slice(0, 8)})`,
+          `Antes: Recibí ${textoPagosLista(pagosIntercambio(original, "recibidos"))} / Di ${textoPagosLista(pagosIntercambio(original, "entregados"))}
+Después: Recibí ${textoPagosLista(recibidosPrev)} / Di ${textoPagosLista(entregadosPrev)}`
+        );
+      }
       cerrarModalIntercambio();
     } catch (e) {
       console.error("Error al guardar el intercambio:", e);
     } finally {
       setGuardandoIntercambio(false);
+    }
+  };
+
+  const eliminarIntercambio = async (it: any) => {
+    if (!window.confirm(`¿Eliminar este intercambio interno (ID: ${it.id.slice(0, 8)})? Se revertirán los montos en caja.`)) return;
+    try {
+      const rec = pagosIntercambio(it, "recibidos");
+      const ent = pagosIntercambio(it, "entregados");
+      // Al eliminar, lo que había entrado sale y lo que había salido vuelve
+      const netoOriginal = restarMapas(sumarPorMetodo(rec), sumarPorMetodo(ent));
+      const inverso: Record<string, number> = {};
+      Object.entries(netoOriginal).forEach(([m, v]) => { inverso[m] = -v; });
+
+      const batch = writeBatch(db);
+      batch.delete(doc(db, COLLECTION_INTERCAMBIOS, it.id));
+      const deltaCaja = datosCaja(inverso);
+      if (Object.keys(deltaCaja).length > 0) batch.set(refCaja, deltaCaja, { merge: true });
+      await batch.commit();
+
+      await registrarAuditoria(
+        "Eliminado",
+        "Intercambio interno",
+        `Intercambio eliminado (ID: ${it.id.slice(0, 8)})`,
+        `Recibí: ${textoPagosLista(rec)} · Di: ${textoPagosLista(ent)}${it.nota ? ` · Nota: ${it.nota}` : ""}`
+      );
+    } catch (e) {
+      console.error("Error eliminando el intercambio:", e);
     }
   };
 
@@ -2086,6 +2363,15 @@ export function FinancialDashboard(props: any) {
       }
       if (Object.keys(deltaCajaGasto).length > 0) batchGasto.set(refCaja, deltaCajaGasto, { merge: true });
       await batchGasto.commit();
+      if (gastoEditId && original) {
+        await registrarAuditoria(
+          "Editado",
+          "Gastos",
+          `Gasto editado: ${datos.concepto} (ID: ${gastoEditId.slice(0, 8)})`,
+          `Antes: ${original.concepto} · $${(original.totalDolares || 0).toFixed(2)} (${textoPagosLista(original.pagos || [])})
+Después: ${datos.concepto} · $${datos.totalDolares.toFixed(2)} (${textoPagosLista(datos.pagos || [])})`
+        );
+      }
       cerrarModalGasto();
     } catch (e) {
       console.error("Error al guardar el gasto:", e);
@@ -2103,6 +2389,12 @@ export function FinancialDashboard(props: any) {
       batchElim.delete(doc(db, COLLECTION_GASTOS, g.id));
       if (Object.keys(deltaCajaElim).length > 0) batchElim.set(refCaja, deltaCajaElim, { merge: true });
       await batchElim.commit();
+      await registrarAuditoria(
+        "Eliminado",
+        "Gastos",
+        `Gasto eliminado: ${g.concepto} ($${(g.totalDolares || 0).toFixed(2)})`,
+        `Pagado con: ${textoPagosLista(g.pagos || [])}${g.nota ? ` · Nota: ${g.nota}` : ""}`
+      );
     } catch (e) {
       console.error("Error eliminando el gasto:", e);
     }
@@ -2137,7 +2429,14 @@ export function FinancialDashboard(props: any) {
 
   // --- REPORTE DE VENTAS (sigue el filtro Día / Semana / Mes) ---
   const generarReportePDF = () => {
-    const etiquetaPeriodo = filtroVentas === "dia" ? "Diario" : filtroVentas === "semana" ? "de los Últimos 7 Días" : "Mensual";
+    const etiquetaPeriodo =
+      filtroVentas === "dia"
+        ? "Diario"
+        : filtroVentas === "semana"
+        ? "de los Últimos 7 Días"
+        : filtroVentas === "mes"
+        ? `Mensual (${NOMBRES_MESES[mesReporte]} ${anioReporte})`
+        : `Anual (${anioReporte})`;
 
     const ventasPeriodo = sales.filter((sale: any) => dentroDelFiltro(sale.fecha));
     const devPeriodo = devoluciones.filter((dev: any) => dentroDelFiltro(dev.fecha));
@@ -2562,6 +2861,10 @@ export function FinancialDashboard(props: any) {
               <Package className="w-5 h-5" />
               Inventario
             </button>
+            <button onClick={() => setCurrentSection("auditoria")} className={navClase("auditoria")}>
+              <FileText className="w-5 h-5" />
+              Auditoría
+            </button>
           </nav>
         </div>
 
@@ -2594,6 +2897,7 @@ export function FinancialDashboard(props: any) {
                 {currentSection === "intercambios" && "Intercambio Interno"}
                 {currentSection === "gastos" && "Gastos del Negocio"}
                 {currentSection === "inventario" && "Módulo de Inventario"}
+                {currentSection === "auditoria" && "Bitácora de Auditoría"}
               </h2>
               <p className="text-emerald-100 text-sm mt-1">
                 Control seguro en la nube.
@@ -2847,25 +3151,66 @@ export function FinancialDashboard(props: any) {
                   <p className="text-xs text-gray-500 mt-0.5">Filtra las ventas y genera reportes imprimibles (el reporte sigue el filtro elegido).</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-                  <div className="flex bg-gray-100 p-1 rounded-xl">
-                    <button 
-                      onClick={() => setFiltroVentas("dia")}
-                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer", filtroVentas === "dia" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
-                    >
-                      Día
-                    </button>
-                    <button 
-                      onClick={() => setFiltroVentas("semana")}
-                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer", filtroVentas === "semana" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
-                    >
-                      Semana
-                    </button>
-                    <button 
-                      onClick={() => setFiltroVentas("mes")}
-                      className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer", filtroVentas === "mes" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
-                    >
-                      Mes
-                    </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex bg-gray-100 p-1 rounded-xl">
+                      <button 
+                        onClick={() => setFiltroVentas("dia")}
+                        className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer", filtroVentas === "dia" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                      >
+                        Día
+                      </button>
+                      <button 
+                        onClick={() => setFiltroVentas("semana")}
+                        className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer", filtroVentas === "semana" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                      >
+                        Semana
+                      </button>
+                      <button 
+                        onClick={() => setFiltroVentas("mes")}
+                        className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer", filtroVentas === "mes" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                      >
+                        Mes
+                      </button>
+                      <button 
+                        onClick={() => setFiltroVentas("anual")}
+                        className={cn("px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer", filtroVentas === "anual" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900")}
+                      >
+                        Anual
+                      </button>
+                    </div>
+
+                    {filtroVentas === "mes" && (
+                      <select
+                        value={mesReporte}
+                        onChange={(e) => setMesReporte(Number(e.target.value))}
+                        className="px-3 py-1.5 text-xs font-bold rounded-xl border border-gray-200 bg-white text-gray-800 cursor-pointer"
+                      >
+                        {NOMBRES_MESES.map((nombre, idx) => (
+                          <option key={idx} value={idx}>{nombre}</option>
+                        ))}
+                      </select>
+                    )}
+
+                    {(filtroVentas === "mes" || filtroVentas === "anual") && (
+                      <select
+                        value={anioReporte}
+                        onChange={(e) => setAnioReporte(Number(e.target.value))}
+                        className="px-3 py-1.5 text-xs font-bold rounded-xl border border-gray-200 bg-white text-gray-800 cursor-pointer"
+                      >
+                        {Array.from(
+                          new Set([
+                            new Date().getFullYear(),
+                            new Date().getFullYear() - 1,
+                            new Date().getFullYear() - 2,
+                            ...sales.map((s: any) => new Date(s.fecha).getFullYear()).filter((y: number) => !isNaN(y))
+                          ])
+                        )
+                          .sort((a, b) => b - a)
+                          .map((anio) => (
+                            <option key={anio} value={anio}>{anio}</option>
+                          ))}
+                      </select>
+                    )}
                   </div>
                   <Button onClick={generarReportePDF} variant="outline" className="border-gray-300 text-gray-700 font-bold flex items-center gap-2 cursor-pointer">
                     <Printer className="w-4 h-4" /> Generar Reporte
@@ -2941,14 +3286,22 @@ export function FinancialDashboard(props: any) {
                         <div className="text-right">
                           <p className="text-lg font-black text-emerald-600">${sale.totalDolares.toFixed(2)}</p>
                           <p className="text-xs font-bold text-gray-500">{fmtBs(sale.totalBs)} BS</p>
-                          {sale.items.length > 0 && (
+                          <div className="mt-2 flex flex-wrap justify-end gap-1">
+                            {sale.items.length > 0 && (
+                              <button
+                                onClick={() => abrirEditarVenta(sale)}
+                                className="inline-flex items-center gap-1 text-xs font-bold text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-lg transition cursor-pointer"
+                              >
+                                <Edit className="w-3.5 h-3.5" /> Editar
+                              </button>
+                            )}
                             <button
-                              onClick={() => abrirEditarVenta(sale)}
-                              className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-lg transition cursor-pointer"
+                              onClick={() => eliminarVenta(sale)}
+                              className="inline-flex items-center gap-1 text-xs font-bold text-red-600 hover:bg-red-50 px-2 py-1 rounded-lg transition cursor-pointer"
                             >
-                              <Edit className="w-3.5 h-3.5" /> Editar venta
+                              <Trash2 className="w-3.5 h-3.5" /> Eliminar
                             </button>
-                          )}
+                          </div>
                         </div>
                       </div>
 
@@ -3173,12 +3526,20 @@ export function FinancialDashboard(props: any) {
                         </p>
                         {it.nota && <p className="text-xs text-gray-500">Nota: {it.nota}</p>}
                       </div>
-                      <button
-                        onClick={() => abrirEditarIntercambio(it)}
-                        className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
-                      >
-                        <Edit className="w-4 h-4" /> Editar
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => abrirEditarIntercambio(it)}
+                          className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
+                        >
+                          <Edit className="w-4 h-4" /> Editar
+                        </button>
+                        <button
+                          onClick={() => eliminarIntercambio(it)}
+                          className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" /> Eliminar
+                        </button>
+                      </div>
                     </div>
                   ))
                 ) : (
@@ -3367,6 +3728,59 @@ export function FinancialDashboard(props: any) {
                     </tbody>
                   </table>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {currentSection === "auditoria" && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Historial de Ediciones y Eliminaciones</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Registro permanente de seguridad. Ningún movimiento en esta bitácora puede editarse ni borrarse.
+                  </p>
+                </div>
+                <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-gray-100 text-gray-700">
+                  Total registros: {auditoria.length}
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {auditoria.length > 0 ? (
+                  auditoria.map((log: any) => (
+                    <div key={log.id} className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm flex flex-col sm:flex-row justify-between items-start gap-3">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={cn(
+                              "text-xs font-black uppercase px-2.5 py-0.5 rounded-lg",
+                              log.accion === "Eliminado" ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700"
+                            )}
+                          >
+                            {log.accion}
+                          </span>
+                          <span className="text-xs font-bold px-2.5 py-0.5 rounded-lg bg-gray-100 text-gray-700">
+                            {log.modulo}
+                          </span>
+                          <span className="text-xs text-gray-400">
+                            {new Date(log.fecha).toLocaleString()} · {log.usuario}
+                          </span>
+                        </div>
+                        <p className="font-bold text-gray-900 text-sm">{log.resumen}</p>
+                        {log.detalle && (
+                          <p className="text-xs text-gray-600 whitespace-pre-line bg-gray-50 border border-gray-100 rounded-xl px-3 py-2 mt-1">
+                            {log.detalle}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center text-gray-400 text-sm">
+                    Aún no hay ediciones ni eliminaciones registradas.
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -3742,15 +4156,89 @@ export function FinancialDashboard(props: any) {
             {Array.isArray(ventaPendienteActual.pagos) && ventaPendienteActual.pagos.length > 0 && (
               <div className="space-y-2">
                 <p className="text-xs font-bold text-gray-500 uppercase">Pagos registrados:</p>
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                   {ventaPendienteActual.pagos.map((p: any, idx: number) => (
-                    <div key={idx} className="flex justify-between items-center text-[11px] text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg">
-                      <span>
-                        {etiquetaTipoPago(p.tipo)} · {p.metodo} · {new Date(p.fecha).toLocaleDateString()}
-                      </span>
-                      <span className="font-bold">
-                        {fmtPago(p)}
-                      </span>
+                    <div key={idx} className="bg-gray-50 px-3 py-2 rounded-lg space-y-2">
+                      <div className="flex justify-between items-center text-[11px] text-gray-600 gap-2">
+                        <span>
+                          {etiquetaTipoPago(p.tipo)} · {p.metodo} · {new Date(p.fecha).toLocaleDateString()}
+                          {p.editado ? " · (editado)" : ""}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-gray-800">{fmtPago(p)}</span>
+                          <button
+                            type="button"
+                            onClick={() => abrirEditarPagoPendiente(idx, p)}
+                            className="p-1 text-blue-600 hover:bg-blue-100 rounded transition cursor-pointer"
+                            title="Editar pago/abono"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => eliminarPagoPendiente(idx)}
+                            className="p-1 text-red-600 hover:bg-red-100 rounded transition cursor-pointer"
+                            title="Eliminar pago/abono"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {editPagoIdx === idx && (
+                        <div className="p-2.5 bg-white border border-blue-200 rounded-xl space-y-2">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                            {METODOS_PAGO.map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => { setEditPagoMetodo(m); if (!necesitaReferencia(m)) setEditPagoRef(""); }}
+                                className={cn(
+                                  "py-1 px-2 text-[11px] font-bold rounded-lg border transition cursor-pointer",
+                                  editPagoMetodo === m ? "bg-blue-600 text-white border-blue-600" : "bg-gray-50 text-gray-700 border-gray-200"
+                                )}
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={editPagoMonto}
+                              onChange={(e) => setEditPagoMonto(e.target.value)}
+                              placeholder={editPagoMetodo === "Divisas" ? "Monto ($)" : "Monto (BS)"}
+                              className="flex-1 min-w-[110px] px-2.5 py-1.5 text-xs font-bold border border-gray-200 rounded-lg"
+                            />
+                            {necesitaReferencia(editPagoMetodo) && (
+                              <input
+                                type="text"
+                                maxLength={4}
+                                value={editPagoRef}
+                                onChange={(e) => setEditPagoRef(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                                placeholder="Ref (4 díg.)"
+                                className="w-24 px-2.5 py-1.5 text-xs font-bold border border-gray-200 rounded-lg"
+                              />
+                            )}
+                            <button
+                              type="button"
+                              onClick={guardarEdicionPagoPendiente}
+                              disabled={guardandoPendiente}
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg cursor-pointer"
+                            >
+                              Guardar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditPagoIdx(null)}
+                              className="px-2.5 py-1.5 text-xs font-bold text-gray-500 hover:bg-gray-100 rounded-lg cursor-pointer"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -3758,19 +4246,28 @@ export function FinancialDashboard(props: any) {
             )}
 
             {modoPendiente === "detalle" && (
-              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-100">
-                <Button
-                  onClick={() => setModoPendiente("abonar")}
-                  className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-xl cursor-pointer"
+              <div className="space-y-2 pt-2 border-t border-gray-100">
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    onClick={() => setModoPendiente("abonar")}
+                    className="bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-xl cursor-pointer"
+                  >
+                    Abonar
+                  </Button>
+                  <Button
+                    onClick={() => setModoPendiente("finalizar")}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl cursor-pointer"
+                  >
+                    Pago finalizado
+                  </Button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => eliminarVenta(ventaPendienteActual)}
+                  className="w-full py-2 text-xs font-bold text-red-600 hover:bg-red-50 rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
                 >
-                  Abonar
-                </Button>
-                <Button
-                  onClick={() => setModoPendiente("finalizar")}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl cursor-pointer"
-                >
-                  Pago finalizado
-                </Button>
+                  <Trash2 className="w-3.5 h-3.5" /> Eliminar deuda completa
+                </button>
               </div>
             )}
 
